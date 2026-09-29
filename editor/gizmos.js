@@ -11,6 +11,7 @@ export class Gizmos {
         this.pickMode = 'face';
         this.activePick = null;
         this.activeButton = 0;
+        this.axisConstraint = null;
         this.distance = Math.hypot(...camera.position);
         this.yaw = Math.atan2(camera.position[0], camera.position[2]);
         this.pitch = Math.asin(camera.position[1] / this.distance);
@@ -22,6 +23,15 @@ export class Gizmos {
     }
 
     bindEvents() {
+        window.addEventListener('keydown', event => {
+            if (isTextInput(document.activeElement)) return;
+            const axis = event.key.toLowerCase();
+            if (['x', 'y', 'z'].includes(axis)) this.axisConstraint = axis;
+        });
+        window.addEventListener('keyup', event => {
+            if (this.axisConstraint === event.key.toLowerCase()) this.axisConstraint = null;
+        });
+        window.addEventListener('blur', () => { this.axisConstraint = null; });
         this.canvas.addEventListener('pointerdown', event => {
             if (event.button !== 0 && event.button !== 1 && event.button !== 2) return;
             this.dragging = true;
@@ -67,28 +77,57 @@ export class Gizmos {
 
     dragSelection(deltaX, deltaY) {
         const pick = this.activePick;
-        const amount = Math.max(1, this.distance) / Math.max(1, this.canvas.height) * 2;
+        const worldDelta = this.getDragDelta(deltaX, deltaY);
         if (this.pickMode === 'mesh') {
-            pick.mesh.position[0] += deltaX * amount;
-            pick.mesh.position[1] -= deltaY * amount;
+            for (let axis = 0; axis < 3; axis++) pick.mesh.position[axis] += worldDelta[axis];
             return;
         }
+        const localDelta = transformDirectionInverse(pick.mesh.getModelMatrix(), worldDelta);
         const vertices = this.pickMode === 'face'
             ? pick.mesh.polygons[pick.faceIndex]
             : [pick.mesh.polygons[pick.faceIndex][pick.vertexIndex]];
         if (this.pickMode === 'vertex') {
             const position = [...pick.vertexPosition];
-            position[0] += deltaX * amount;
-            position[1] -= deltaY * amount;
+            for (let axis = 0; axis < 3; axis++) position[axis] += localDelta[axis];
             pick.mesh.setFaceVertex(pick.faceIndex, pick.vertexIndex, position);
             pick.vertexPosition = position;
             return;
         }
         vertices.forEach(vertex => {
-            vertex[0] += deltaX * amount;
-            vertex[1] -= deltaY * amount;
+            for (let axis = 0; axis < 3; axis++) vertex[axis] += localDelta[axis];
         });
         pick.mesh.rebuildRenderData();
+    }
+
+    getDragDelta(deltaX, deltaY) {
+        if (this.axisConstraint) {
+            const axisIndex = { x: 0, y: 1, z: 2 }[this.axisConstraint];
+            const axis = [0, 0, 0];
+            axis[axisIndex] = 1;
+            const rect = this.canvas.getBoundingClientRect();
+            const origin = this.projectWorld(this.camera.target);
+            const endpoint = this.projectWorld(this.camera.target.map((value, index) => value + axis[index]));
+            const screenAxis = [(endpoint[0] - origin[0]) * rect.width / 2, -(endpoint[1] - origin[1]) * rect.height / 2];
+            const screenLengthSquared = screenAxis[0] ** 2 + screenAxis[1] ** 2;
+            if (screenLengthSquared < 1e-6) return [0, 0, 0];
+            const amount = (deltaX * screenAxis[0] + deltaY * screenAxis[1]) / screenLengthSquared;
+            return axis.map(value => value * amount);
+        }
+
+        const forward = normalize(this.camera.target.map((value, index) => value - this.camera.position[index]));
+        const right = normalize(cross(forward, this.camera.up));
+        const up = normalize(cross(right, forward));
+        const rect = this.canvas.getBoundingClientRect();
+        const amount = 2 * this.distance * Math.tan(this.camera.fov / 2) / Math.max(1, rect.height);
+        return right.map((value, index) => (value * deltaX - up[index] * deltaY) * amount);
+    }
+
+    projectWorld(point) {
+        const view = this.camera.getViewMatrix();
+        const projection = this.camera.getProjectionMatrix(this.canvas.width / this.canvas.height);
+        const viewed = multiplyMatrixVector(view, [...point, 1]);
+        const clip = multiplyMatrixVector(projection, viewed);
+        return [clip[0] / clip[3], clip[1] / clip[3]];
     }
 
     pick(clientX, clientY) {
@@ -230,4 +269,24 @@ function dot(a, b) {
 function normalize(vector) {
     const length = Math.hypot(...vector) || 1;
     return vector.map(value => value / length);
+}
+
+function transformDirectionInverse(matrix, vector) {
+    const a00 = matrix[0], a01 = matrix[4], a02 = matrix[8];
+    const a10 = matrix[1], a11 = matrix[5], a12 = matrix[9];
+    const a20 = matrix[2], a21 = matrix[6], a22 = matrix[10];
+    const determinant = a00 * (a11 * a22 - a12 * a21)
+        - a01 * (a10 * a22 - a12 * a20)
+        + a02 * (a10 * a21 - a11 * a20);
+    if (Math.abs(determinant) < 1e-10) return [...vector];
+    const inverse = 1 / determinant;
+    return [
+        ((a11 * a22 - a12 * a21) * vector[0] + (a02 * a21 - a01 * a22) * vector[1] + (a01 * a12 - a02 * a11) * vector[2]) * inverse,
+        ((a12 * a20 - a10 * a22) * vector[0] + (a00 * a22 - a02 * a20) * vector[1] + (a02 * a10 - a00 * a12) * vector[2]) * inverse,
+        ((a10 * a21 - a11 * a20) * vector[0] + (a01 * a20 - a00 * a21) * vector[1] + (a00 * a11 - a01 * a10) * vector[2]) * inverse
+    ];
+}
+
+function isTextInput(element) {
+    return ['INPUT', 'TEXTAREA', 'SELECT'].includes(element?.tagName) || element?.isContentEditable;
 }

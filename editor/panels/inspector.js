@@ -196,13 +196,33 @@ export function createInspectorPanel(gl, textureLibrary, onSelectFace) {
         const color = document.createElement('input');
         color.className = 'color-input';
         color.type = 'color';
-        color.value = '#' + currentMesh.faceColors[currentFace].map(value => Math.round(value * 255).toString(16).padStart(2, '0')).join('');
+        const faceColor = currentMesh.faceColors[currentFace];
+        color.value = '#' + faceColor.slice(0, 3).map(value => Math.round(value * 255).toString(16).padStart(2, '0')).join('');
         color.addEventListener('input', () => {
-            currentMesh.faceColors[currentFace] = [1, 3, 5].map(offset => parseInt(color.value.slice(offset, offset + 2), 16) / 255);
+            const alpha = faceColor[3] ?? 1;
+            const rgb = [1, 3, 5].map(offset => parseInt(color.value.slice(offset, offset + 2), 16) / 255);
+            faceColor.splice(0, faceColor.length, ...rgb, alpha);
         });
         colorRow.appendChild(color);
         colorGroup.appendChild(colorRow);
         info.appendChild(colorGroup);
+        const opacityGroup = document.createElement('div');
+        opacityGroup.className = 'field-group';
+        const opacityLabel = document.createElement('label');
+        opacityLabel.className = 'field-label';
+        opacityLabel.textContent = 'Opacity';
+        opacityGroup.appendChild(opacityLabel);
+        const opacity = document.createElement('input');
+        opacity.className = 'opacity-input editor-input';
+        opacity.type = 'range';
+        opacity.min = '0';
+        opacity.max = '1';
+        opacity.step = '0.01';
+        opacity.value = faceColor[3] ?? 1;
+        opacity.setAttribute('aria-label', 'Face opacity');
+        opacity.addEventListener('input', () => { faceColor[3] = Number(opacity.value); });
+        opacityGroup.appendChild(opacity);
+        info.appendChild(opacityGroup);
 
         info.appendChild(addTextureSelect('Mesh image', currentMesh.textureAssetId, asset => {
             currentMesh.textureAssetId = asset?.id || null;

@@ -180,7 +180,7 @@ export class Mesh {
         this.uvs = new Float32Array(uvs);
         this.indices = new Uint16Array(indices);
         this.faceCount = this.polygons.length;
-        while (this.faceColors.length < this.faceCount) this.faceColors.push([1, 1, 1]);
+        while (this.faceColors.length < this.faceCount) this.faceColors.push([1, 1, 1, 1]);
         while (this.faceTextures.length < this.faceCount) this.faceTextures.push(null);
         while (this.faceTextureIds.length < this.faceCount) this.faceTextureIds.push(null);
         while (this.faceUvTransforms.length < this.faceCount) this.faceUvTransforms.push({ scale: [1, 1], offset: [0, 0], rotation: 0, flipX: false, flipY: false });
@@ -269,7 +269,7 @@ export class Mesh {
         return out;
     }
 
-    draw(gl, program) {
+    draw(gl, program, faceIndices = null) {
         this.initBuffers(gl, program);
 
         if (gl.createVertexArray) {
@@ -286,11 +286,12 @@ export class Mesh {
         const uUVRotation = gl.getUniformLocation(program, 'uUVRotation');
         const uFaceSelected = gl.getUniformLocation(program, 'uFaceSelected');
         gl.uniformMatrix4fv(uModel, false, this.getModelMatrix());
-        for (let faceIndex = 0; faceIndex < this.faceCount; faceIndex++) {
-            const color = this.faceColors[faceIndex] || this.material.color;
+        const facesToDraw = faceIndices || this.faceRanges.map((_, faceIndex) => faceIndex);
+        for (const faceIndex of facesToDraw) {
+            const color = this.faceColors[faceIndex] || [...this.material.color, 1];
             const texture = this.faceTextures[faceIndex] || (this.material.useTexture ? this.material.texture : null);
             const transform = this.faceUvTransforms[faceIndex];
-            gl.uniform3fv(uColor, new Float32Array(color));
+            gl.uniform4fv(uColor, new Float32Array([color[0], color[1], color[2], color[3] ?? 1]));
             gl.uniform1i(uUseTexture, texture ? 1 : 0);
             gl.uniform1f(uFaceSelected, this.selectedFace === faceIndex ? 1 : 0);
             gl.uniform4f(

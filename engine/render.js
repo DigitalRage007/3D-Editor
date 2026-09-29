@@ -60,6 +60,8 @@ export class Renderer {
         gl.clearColor(0.1, 0.1, 0.15, 1.0);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
         gl.enable(gl.DEPTH_TEST);
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
         gl.useProgram(this.program);
 
@@ -72,8 +74,43 @@ export class Renderer {
         gl.uniformMatrix4fv(uView, false, view);
         gl.uniformMatrix4fv(uProj, false, proj);
 
-        for (const mesh of scene.meshes) {
-            mesh.draw(gl, this.program);
+        const opaqueFaces = new Map();
+        const transparentFaces = [];
+        scene.meshes.forEach(mesh => {
+            const model = mesh.getModelMatrix();
+            mesh.faceRanges.forEach((_, faceIndex) => {
+                const color = mesh.faceColors[faceIndex] || [1, 1, 1, 1];
+                const texture = mesh.faceTextures[faceIndex] || (mesh.material.useTexture ? mesh.material.texture : null);
+                if (texture || (color[3] ?? 1) < 1) {
+                    const polygon = mesh.polygons[faceIndex];
+                    const center = polygon.reduce((sum, vertex) => sum.map((value, axis) => value + vertex[axis] / polygon.length), [0, 0, 0]);
+                    const worldCenter = transformPoint(model, center);
+                    const distance = Math.hypot(...worldCenter.map((value, axis) => value - camera.position[axis]));
+                    transparentFaces.push({ mesh, faceIndex, distance });
+                } else {
+                    if (!opaqueFaces.has(mesh)) opaqueFaces.set(mesh, []);
+                    opaqueFaces.get(mesh).push(faceIndex);
+                }
+            });
+        });
+
+        gl.depthMask(true);
+        for (const [mesh, faceIndices] of opaqueFaces) {
+            mesh.draw(gl, this.program, faceIndices);
         }
+
+        transparentFaces.sort((a, b) => b.distance - a.distance);
+        gl.depthMask(false);
+        for (const face of transparentFaces) {
+            face.mesh.draw(gl, this.program, [face.faceIndex]);
+        }
+        gl.depthMask(true);
     }
+}
+
+function transformPoint(matrix, point) {
+    const x = matrix[0] * point[0] + matrix[4] * point[1] + matrix[8] * point[2] + matrix[12];
+    const y = matrix[1] * point[0] + matrix[5] * point[1] + matrix[9] * point[2] + matrix[13];
+    const z = matrix[2] * point[0] + matrix[6] * point[1] + matrix[10] * point[2] + matrix[14];
+    return [x, y, z];
 }
