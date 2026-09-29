@@ -4,7 +4,7 @@ import { createAssetsPanel } from './panels/assets.js';
 import { createBonesPanel } from './panels/bones.js';
 
 export function createUI(root, options) {
-    const { scene, onSelect, onSelectFace, onSetPickMode, onAddCube, onAddPlane, onAddSphere, onAddCylinder, onDuplicate, onAddFace, onExtrudeFace, onMergeFace, onMergeVertices, onAddVertex, onAddBone, onRemoveBone, onKeyBone, onPlayAnimation, onImportMesh, onImportTexture, onDelete, onResetCamera, onExport } = options;
+    const { scene, onSelect, onSelectFace, onSetPickMode, onAddCube, onAddPlane, onAddSphere, onAddCylinder, onAddBatch, onDuplicate, onAddFace, onExtrudeFace, onMergeFace, onMergeVertices, onAddVertex, onAddBone, onRemoveBone, onKeyBone, onPlayAnimation, onImportMesh, onImportTexture, onDelete, onResetCamera, onExport } = options;
     root.style.pointerEvents = 'none';
     root.innerHTML = '';
 
@@ -23,6 +23,8 @@ export function createUI(root, options) {
         .tool-group summary::before { content: '+'; display: inline-block; width: 18px; color: #ffd071; }
         .tool-group[open] summary::before { content: '-'; }
         .tool-group-content { display: flex; flex-wrap: wrap; gap: 5px; padding: 6px 0 2px; }
+        .batch-create-controls { display: grid; grid-template-columns: minmax(100px, 1fr) 90px auto; gap: 5px; align-items: center; width: 100%; }
+        .batch-create-status { grid-column: 1 / -1; min-height: 16px; color: #9aa9ba; font: 11px/1.3 ui-monospace, monospace; }
         .editor-title { margin: 0 12px 0 4px; font-size: 14px; letter-spacing: .04em; text-transform: uppercase; color: #9ed8ff; }
         .editor-button { border: 1px solid #3b526d; background: #1b2a3b; color: #e8edf5; padding: 6px 10px; cursor: pointer; border-radius: 3px; }
         .editor-button:hover { background: #29425c; }
@@ -133,6 +135,49 @@ export function createUI(root, options) {
     button('+ Sphere', onAddSphere);
     button('+ Cylinder', onAddCylinder);
     button('Duplicate', onDuplicate);
+    const batchCreate = document.createElement('div');
+    batchCreate.className = 'batch-create-controls';
+    const batchType = document.createElement('select');
+    batchType.className = 'editor-input';
+    batchType.setAttribute('aria-label', 'Primitive type to add');
+    ['Cube', 'Plane', 'Sphere', 'Cylinder'].forEach(type => {
+        const option = document.createElement('option');
+        option.value = type;
+        option.textContent = type;
+        batchType.appendChild(option);
+    });
+    const batchAmount = document.createElement('input');
+    batchAmount.className = 'editor-input';
+    batchAmount.type = 'number';
+    batchAmount.min = '1';
+    batchAmount.max = '100000';
+    batchAmount.step = '1';
+    batchAmount.value = '100';
+    batchAmount.setAttribute('aria-label', 'Number of meshes to add');
+    const batchButton = document.createElement('button');
+    batchButton.className = 'editor-button';
+    batchButton.type = 'button';
+    batchButton.textContent = 'Add copies';
+    const batchStatus = document.createElement('output');
+    batchStatus.className = 'batch-create-status';
+    batchButton.addEventListener('click', async () => {
+        const amount = Math.max(1, Math.min(100000, Math.floor(Number(batchAmount.value) || 1)));
+        batchAmount.value = String(amount);
+        batchButton.disabled = true;
+        batchStatus.textContent = `Adding ${amount} ${batchType.value.toLowerCase()} meshes...`;
+        try {
+            await onAddBatch(batchType.value, amount, added => {
+                batchStatus.textContent = `Added ${added} / ${amount}`;
+            });
+            batchStatus.textContent = `Added ${amount} ${batchType.value.toLowerCase()} meshes`;
+        } catch (error) {
+            batchStatus.textContent = `Batch stopped: ${error.message || error}`;
+        } finally {
+            batchButton.disabled = false;
+        }
+    });
+    batchCreate.append(batchType, batchAmount, batchButton, batchStatus);
+    activeToolGroup.appendChild(batchCreate);
     button('+ Face', onAddFace);
     button('Extrude', onExtrudeFace);
     button('+ Vertex', onAddVertex);

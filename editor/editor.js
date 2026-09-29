@@ -24,6 +24,7 @@ export class Editor {
             onAddPlane: () => this.addPrimitive('Plane'),
             onAddSphere: () => this.addPrimitive('Sphere'),
             onAddCylinder: () => this.addPrimitive('Cylinder'),
+            onAddBatch: (type, count, onProgress) => this.addPrimitiveBatch(type, count, onProgress),
             onDuplicate: () => this.duplicateSelected(),
             onAddFace: () => this.addFace(),
             onExtrudeFace: () => this.extrudeFace(),
@@ -276,6 +277,15 @@ export class Editor {
     }
 
     addPrimitive(type) {
+        const mesh = this.createPrimitive(type);
+        if (!mesh) return;
+        mesh.name = `${type} ${this.scene.meshes.length + 1}`;
+        mesh.position = [0, 0.5, 0];
+        this.scene.add(mesh);
+        this.select(mesh);
+    }
+
+    createPrimitive(type) {
         const material = new Material({ color: [0.78, 0.84, 0.92] });
         const creators = {
             Cube: () => Mesh.createCube(material),
@@ -283,12 +293,32 @@ export class Editor {
             Sphere: () => Mesh.createUvSphere(material),
             Cylinder: () => Mesh.createCylinder(material)
         };
-        const mesh = creators[type]?.();
-        if (!mesh) return;
-        mesh.name = `${type} ${this.scene.meshes.length + 1}`;
-        mesh.position = [0, 0.5, 0];
-        this.scene.add(mesh);
-        this.select(mesh);
+        return creators[type]?.() || null;
+    }
+
+    async addPrimitiveBatch(type, count, onProgress = () => {}) {
+        const amount = Math.max(1, Math.min(100000, Math.floor(count) || 1));
+        const columns = Math.ceil(Math.sqrt(amount));
+        const rows = Math.ceil(amount / columns);
+        const chunkSize = 250;
+        let lastMesh = null;
+        for (let index = 0; index < amount; index++) {
+            const mesh = this.createPrimitive(type);
+            if (!mesh) throw new Error(`Unknown primitive type: ${type}`);
+            mesh.name = `${type} ${this.scene.meshes.length + 1}`;
+            mesh.position = [
+                (index % columns - (columns - 1) / 2) * 1.5,
+                0.5,
+                (Math.floor(index / columns) - (rows - 1) / 2) * 1.5
+            ];
+            this.scene.add(mesh);
+            lastMesh = mesh;
+            if ((index + 1) % chunkSize === 0 || index + 1 === amount) {
+                onProgress(index + 1);
+                if (index + 1 < amount) await new Promise(resolve => setTimeout(resolve, 0));
+            }
+        }
+        this.select(lastMesh);
     }
 
     duplicateSelected() {
