@@ -28,6 +28,7 @@ export class Mesh {
         this.textureAssetId = null;
         this.faceCount = 0;
         this.selectedFace = -1;
+        this.selectedVertex = null;
         this.polygons = [];
         this.faceRanges = [];
         this.skeleton = new Skeleton();
@@ -254,6 +255,69 @@ export class Mesh {
         }
     }
 
+    mergeNearbyVertices(faceIndex, vertexIndex, threshold = 0.08) {
+        const source = this.polygons[faceIndex]?.[vertexIndex];
+        if (!source) return false;
+        const connected = new Set();
+        this.polygons.forEach(polygon => polygon.forEach(vertex => {
+            if (Math.hypot(vertex[0] - source[0], vertex[1] - source[1], vertex[2] - source[2]) <= threshold) connected.add(vertex);
+        }));
+        if (connected.size < 2) return false;
+        const merged = [...source].map((_, axis) => [...connected].reduce((sum, vertex) => sum + vertex[axis] / connected.size, 0));
+        this.polygons = this.polygons.map(polygon => polygon.map(vertex => connected.has(vertex) ? merged : vertex));
+        this.rebuildRenderData();
+        return true;
+    }
+
+    mergeCoplanarFace(faceIndex, tolerance = 0.0001) {
+        const faceA = this.polygons[faceIndex];
+        const frameA = this.getFaceFrame(faceIndex);
+        if (!faceA || !frameA) return false;
+        for (let otherIndex = 0; otherIndex < this.polygons.length; otherIndex++) {
+            if (otherIndex === faceIndex) continue;
+            const faceB = this.polygons[otherIndex];
+            const frameB = this.getFaceFrame(otherIndex);
+            if (!frameB || dot3(frameA.normal, frameB.normal) < 0.999) continue;
+            if (!faceB.every(vertex => Math.abs(dot3(vertex.map((value, axis) => value - frameA.center[axis]), frameA.normal)) <= tolerance)) continue;
+            if (!this.canMergeFaceData(faceIndex, otherIndex)) continue;
+
+            const edges = [...makeFaceEdges(faceA, this.faceUvs[faceIndex]), ...makeFaceEdges(faceB, this.faceUvs[otherIndex])];
+            const boundaryEdges = [];
+            edges.forEach(edge => {
+                const reverseIndex = boundaryEdges.findIndex(other => other.startKey === edge.endKey && other.endKey === edge.startKey);
+                if (reverseIndex < 0) boundaryEdges.push(edge);
+                else boundaryEdges.splice(reverseIndex, 1);
+            });
+            const boundary = stitchFaceEdges(boundaryEdges);
+            if (!boundary || boundary.vertices.length < 3) continue;
+
+            this.polygons[faceIndex] = boundary.vertices;
+            this.faceUvs[faceIndex] = boundary.uvs;
+            this.polygons.splice(otherIndex, 1);
+            [this.faceColors, this.faceTextures, this.faceTextureIds, this.faceUvTransforms, this.faceUvs].forEach(values => values.splice(otherIndex, 1));
+            this.selectedFace = otherIndex < faceIndex ? faceIndex - 1 : faceIndex;
+            this.rebuildRenderData();
+            return true;
+        }
+        return false;
+    }
+
+    canMergeFaceData(firstIndex, secondIndex) {
+        const firstColor = this.faceColors[firstIndex] || [1, 1, 1, 1];
+        const secondColor = this.faceColors[secondIndex] || [1, 1, 1, 1];
+        const firstTransform = this.faceUvTransforms[firstIndex];
+        const secondTransform = this.faceUvTransforms[secondIndex];
+        return firstColor.length === secondColor.length
+            && firstColor.every((value, index) => value === secondColor[index])
+            && this.faceTextures[firstIndex] === this.faceTextures[secondIndex]
+            && this.faceTextureIds[firstIndex] === this.faceTextureIds[secondIndex]
+            && firstTransform.rotation === secondTransform.rotation
+            && firstTransform.flipX === secondTransform.flipX
+            && firstTransform.flipY === secondTransform.flipY
+            && firstTransform.scale.every((value, axis) => value === secondTransform.scale[axis])
+            && firstTransform.offset.every((value, axis) => value === secondTransform.offset[axis]);
+    }
+
     rebuildRenderData() {
         const verticesByPosition = new Map();
         this.polygons = this.polygons.map(polygon => polygon.map(vertex => {
@@ -394,6 +458,7 @@ export class Mesh {
         const uTexture = gl.getUniformLocation(program, 'uTexture');
         const uUVTransform = gl.getUniformLocation(program, 'uUVTransform');
         const uUVRotation = gl.getUniformLocation(program, 'uUVRotation');
+        const uUVCenter = gl.getUniformLocation(program, 'uUVCenter');
         const uFaceSelected = gl.getUniformLocation(program, 'uFaceSelected');
         gl.uniformMatrix4fv(uModel, false, this.getModelMatrix());
         const facesToDraw = faceIndices || this.faceRanges.map((_, faceIndex) => faceIndex);
@@ -401,6 +466,8 @@ export class Mesh {
             const color = this.faceColors[faceIndex] || [...this.material.color, 1];
             const texture = this.faceTextures[faceIndex] || (this.material.useTexture ? this.material.texture : null);
             const transform = this.faceUvTransforms[faceIndex];
+            const faceUvs = this.faceUvs[faceIndex] || [];
+            const uvCenter = faceUvs.reduce((sum, uv) => [sum[0] + uv[0] / faceUvs.length, sum[1] + uv[1] / faceUvs.length], [0, 0]);
             gl.uniform4fv(uColor, new Float32Array([color[0], color[1], color[2], color[3] ?? 1]));
             gl.uniform1i(uUseTexture, texture ? 1 : 0);
             gl.uniform1f(uFaceSelected, this.selectedFace === faceIndex ? 1 : 0);
@@ -412,6 +479,7 @@ export class Mesh {
                 transform.offset[1]
             );
             gl.uniform1f(uUVRotation, transform.rotation);
+            gl.uniform2f(uUVCenter, uvCenter[0], uvCenter[1]);
             if (texture) {
                 gl.activeTexture(gl.TEXTURE0);
                 gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -459,4 +527,38 @@ function cross3(a, b) {
 function normalize3(vector) {
     const length = Math.hypot(...vector);
     return length > 1e-10 ? vector.map(value => value / length) : null;
+}
+
+function makeFaceEdges(vertices, uvs) {
+    return vertices.map((start, index) => {
+        const endIndex = (index + 1) % vertices.length;
+        const end = vertices[endIndex];
+        return {
+            start,
+            end,
+            uv: [...uvs[index]],
+            startKey: start.join(','),
+            endKey: end.join(',')
+        };
+    });
+}
+
+function stitchFaceEdges(edges) {
+    if (!edges.length) return null;
+    const remaining = [...edges];
+    const first = remaining.shift();
+    const vertices = [first.start];
+    const uvs = [first.uv];
+    const startKey = first.startKey;
+    let currentKey = first.endKey;
+    let guard = edges.length;
+    while (currentKey !== startKey && guard-- > 0) {
+        const edgeIndex = remaining.findIndex(edge => edge.startKey === currentKey);
+        if (edgeIndex < 0) return null;
+        const edge = remaining.splice(edgeIndex, 1)[0];
+        vertices.push(edge.start);
+        uvs.push(edge.uv);
+        currentKey = edge.endKey;
+    }
+    return currentKey === startKey && remaining.length === 0 ? { vertices, uvs } : null;
 }

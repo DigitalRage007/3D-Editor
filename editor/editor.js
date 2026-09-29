@@ -27,6 +27,8 @@ export class Editor {
             onDuplicate: () => this.duplicateSelected(),
             onAddFace: () => this.addFace(),
             onExtrudeFace: () => this.extrudeFace(),
+            onMergeFace: () => this.mergeSelectedFace(),
+            onMergeVertices: () => this.mergeSelectedVertices(),
             onAddVertex: () => this.addVertex(),
             onAddBone: () => this.addBone(),
             onPlayAnimation: () => this.playAnimation(),
@@ -38,12 +40,15 @@ export class Editor {
         });
         this.gizmos = new Gizmos(scene, camera, renderer.canvas, {
             onPickFace: (mesh, faceIndex) => {
+                mesh.selectedVertex = null;
                 this.select(mesh);
                 this.selectFace(faceIndex);
             },
-            onPickVertex: (mesh, faceIndex) => {
+            onPickVertex: (mesh, faceIndex, vertexIndex) => {
                 this.select(mesh);
                 this.selectFace(faceIndex);
+                mesh.selectedVertex = { faceIndex, vertexIndex };
+                this.ui.setSelected(mesh);
             }
         });
 
@@ -70,6 +75,7 @@ export class Editor {
 
     selectFace(faceIndex) {
         if (!this.selected) return;
+        this.selected.selectedVertex = null;
         this.selected.selectedFace = faceIndex;
         this.ui.setFace(faceIndex);
     }
@@ -84,6 +90,23 @@ export class Editor {
         if (!this.selected) return;
         this.selected.extrudeFace(Math.max(0, this.selected.selectedFace));
         this.selectFace(this.selected.selectedFace);
+    }
+
+    mergeSelectedFace() {
+        if (!this.selected) return;
+        if (this.selected.mergeCoplanarFace(Math.max(0, this.selected.selectedFace))) {
+            this.selected.selectedVertex = null;
+            this.selectFace(this.selected.selectedFace);
+        }
+    }
+
+    mergeSelectedVertices() {
+        const selectedVertex = this.selected?.selectedVertex;
+        if (!selectedVertex) return;
+        if (this.selected.mergeNearbyVertices(selectedVertex.faceIndex, selectedVertex.vertexIndex)) {
+            this.selected.selectedVertex = null;
+            this.ui.setSelected(this.selected);
+        }
     }
 
     addVertex() {

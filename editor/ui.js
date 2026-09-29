@@ -3,7 +3,7 @@ import { createInspectorPanel } from './panels/inspector.js';
 import { createAssetsPanel } from './panels/assets.js';
 
 export function createUI(root, options) {
-    const { scene, onSelect, onSelectFace, onSetPickMode, onAddCube, onAddPlane, onAddSphere, onAddCylinder, onDuplicate, onAddFace, onExtrudeFace, onAddVertex, onAddBone, onPlayAnimation, onImportMesh, onImportTexture, onDelete, onResetCamera, onExport } = options;
+    const { scene, onSelect, onSelectFace, onSetPickMode, onAddCube, onAddPlane, onAddSphere, onAddCylinder, onDuplicate, onAddFace, onExtrudeFace, onMergeFace, onMergeVertices, onAddVertex, onAddBone, onPlayAnimation, onImportMesh, onImportTexture, onDelete, onResetCamera, onExport } = options;
     root.style.pointerEvents = 'none';
     root.innerHTML = '';
 
@@ -214,6 +214,78 @@ export function createUI(root, options) {
     uvActionButton('Rotate +90', Math.PI / 2, 1, 1);
     uvActionButton('Widen', 0, 1.25, 1);
     uvActionButton('Lengthen', 0, 1, 1.25);
+    const imageTransformRow = document.createElement('div');
+    imageTransformRow.className = 'uv-transform-row';
+    const imageRotationGroup = document.createElement('label');
+    imageRotationGroup.className = 'field-group';
+    const imageRotationLabel = document.createElement('span');
+    imageRotationLabel.className = 'field-label';
+    imageRotationLabel.textContent = 'Selected face image rotation';
+    const imageRotation = document.createElement('input');
+    imageRotation.className = 'editor-input';
+    imageRotation.type = 'range';
+    imageRotation.min = '-180';
+    imageRotation.max = '180';
+    imageRotation.step = '1';
+    imageRotation.value = '0';
+    imageRotationGroup.append(imageRotationLabel, imageRotation);
+    imageTransformRow.appendChild(imageRotationGroup);
+    let previousImageRotation = 0;
+    const imageMirrorButton = (label, axis) => {
+        const mirror = document.createElement('button');
+        mirror.className = 'editor-button';
+        mirror.type = 'button';
+        mirror.textContent = label;
+        mirror.addEventListener('click', () => {
+            if (!selectedMesh) return;
+            const transform = selectedMesh.faceUvTransforms[selectedMesh.selectedFace];
+            const property = axis === 0 ? 'flipX' : 'flipY';
+            transform[property] = !transform[property];
+            mirror.classList.toggle('selected', transform[property]);
+        });
+        imageTransformRow.appendChild(mirror);
+        return mirror;
+    };
+    const mirrorU = imageMirrorButton('Reflect U', 0);
+    const mirrorV = imageMirrorButton('Reflect V', 1);
+    const mergeFaceButton = document.createElement('button');
+    mergeFaceButton.className = 'editor-button';
+    mergeFaceButton.type = 'button';
+    mergeFaceButton.textContent = 'Merge coplanar face';
+    mergeFaceButton.addEventListener('click', () => {
+        onMergeFace?.();
+        refreshUvTransformControls();
+        drawUvWorkspace();
+    });
+    imageTransformRow.appendChild(mergeFaceButton);
+    const mergeVerticesButton = document.createElement('button');
+    mergeVerticesButton.className = 'editor-button';
+    mergeVerticesButton.type = 'button';
+    mergeVerticesButton.textContent = 'Weld selected vertices';
+    mergeVerticesButton.addEventListener('click', () => {
+        onMergeVertices?.();
+        drawUvWorkspace();
+    });
+    imageTransformRow.appendChild(mergeVerticesButton);
+    imageRotation.addEventListener('input', () => {
+        if (!selectedMesh) return;
+        const nextRotation = Number(imageRotation.value);
+        selectedMesh.faceUvTransforms[selectedMesh.selectedFace].rotation += (nextRotation - previousImageRotation) * Math.PI / 180;
+        previousImageRotation = nextRotation;
+    });
+
+    function refreshFaceImageControls() {
+        const transform = selectedMesh?.faceUvTransforms[selectedMesh.selectedFace];
+        imageRotation.disabled = !transform;
+        mirrorU.disabled = !transform;
+        mirrorV.disabled = !transform;
+        mergeFaceButton.disabled = !transform;
+        mergeVerticesButton.disabled = !selectedMesh?.selectedVertex;
+        previousImageRotation = 0;
+        imageRotation.value = '0';
+        mirrorU.classList.toggle('selected', !!transform?.flipX);
+        mirrorV.classList.toggle('selected', !!transform?.flipY);
+    }
     uvRotation.addEventListener('input', () => {
         if (!selectedMesh) return;
         const nextRotation = Number(uvRotation.value);
@@ -241,7 +313,7 @@ export function createUI(root, options) {
     uvCanvas.className = 'uv-canvas';
     uvCanvas.width = 1000;
     uvCanvas.height = 680;
-    uvWorkspace.append(uvTitle, uvImageRow, uvTransformRow, uvCanvas);
+    uvWorkspace.append(uvTitle, uvImageRow, uvTransformRow, imageTransformRow, uvCanvas);
     let selectedMesh = null;
     let uvDrag = null;
     const uvRegion = { x: 270, y: 80, width: 460, height: 460 };
@@ -321,6 +393,7 @@ export function createUI(root, options) {
         selectedMesh.selectedFace = faceIndex;
         onSelectFace(faceIndex);
         refreshUvTransformControls();
+        refreshFaceImageControls();
         uvDrag = { faceIndex, x: event.clientX, y: event.clientY };
         uvCanvas.setPointerCapture(event.pointerId);
         drawUvWorkspace();
@@ -377,8 +450,8 @@ export function createUI(root, options) {
     panels.appendChild(panelDisclosure('Assets', assets.element));
 
     return {
-        setSelected: mesh => { selectedMesh = mesh; inspector.setMesh(mesh); refreshUvTextures(); refreshUvTransformControls(); drawUvWorkspace(); },
-        setFace: faceIndex => { inspector.setFace(faceIndex); refreshUvTransformControls(); drawUvWorkspace(); },
+        setSelected: mesh => { selectedMesh = mesh; inspector.setMesh(mesh); refreshUvTextures(); refreshUvTransformControls(); refreshFaceImageControls(); drawUvWorkspace(); },
+        setFace: faceIndex => { inspector.setFace(faceIndex); refreshUvTransformControls(); refreshFaceImageControls(); drawUvWorkspace(); },
         refreshHierarchy: hierarchy.refresh,
         refreshTextures: () => { assets.refresh(); inspector.refresh(); refreshUvTextures(); },
         updateUvWorkspace: drawUvWorkspace,
