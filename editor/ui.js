@@ -100,7 +100,7 @@ export function createUI(root, options) {
 
     panels.appendChild(hierarchy.element);
     panels.appendChild(inspector.element);
-    panels.appendChild(assets);
+    panels.appendChild(assets.element);
 
     return {
         setSelected: mesh => inspector.setMesh(mesh),
