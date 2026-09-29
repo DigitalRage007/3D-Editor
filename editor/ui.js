@@ -11,6 +11,7 @@ export function createUI(root, options) {
     const style = document.createElement('style');
     style.textContent = `
         #ui-root { color: #e8edf5; font: 13px/1.4 system-ui, sans-serif; }
+        .internal-fps { position: fixed; right: 12px; bottom: 12px; z-index: 20; padding: 6px 9px; color: #bfe9d3; background: rgba(13, 23, 20, 0.92); border: 1px solid rgba(115, 190, 150, 0.45); font: 12px/1.3 ui-monospace, monospace; font-variant-numeric: tabular-nums; pointer-events: none; }
         .editor-shell { display: flex; flex-direction: column; gap: 8px; padding: 12px; width: min(100% - 24px, 920px); box-sizing: border-box; pointer-events: none; transform-origin: top left; }
         .editor-toolbar { background: rgba(16, 22, 32, 0.92); border: 1px solid rgba(164, 183, 211, 0.2); box-shadow: 0 10px 30px rgba(0,0,0,.25); pointer-events: auto; }
         .editor-toolbar { display: flex; flex-direction: column; gap: 5px; padding: 7px; }
@@ -75,6 +76,10 @@ export function createUI(root, options) {
         @media (max-width: 700px) { .editor-panels { grid-template-columns: 1fr; } .editor-toolbar { flex-wrap: wrap; } .editor-title { width: 100%; } }
     `;
     root.appendChild(style);
+    const fpsReadout = document.createElement('div');
+    fpsReadout.className = 'internal-fps';
+    fpsReadout.textContent = 'Internal FPS --';
+    root.appendChild(fpsReadout);
     window.addEventListener('keydown', event => {
         if (event.key.toLowerCase() !== 'f' || ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
         root.style.display = root.style.display === 'none' ? '' : 'none';
@@ -481,6 +486,7 @@ export function createUI(root, options) {
         setFace: faceIndex => { inspector.setFace(faceIndex); refreshUvTransformControls(); refreshFaceImageControls(); drawUvWorkspace(); },
         refreshHierarchy: hierarchy.refresh,
         refreshBones: bones.refresh,
+        setInternalFps: (fps, frameMs) => { fpsReadout.textContent = `Internal FPS ${Math.round(fps)} | ${frameMs.toFixed(2)} ms`; },
         refreshTextures: () => { assets.refresh(); inspector.refresh(); refreshUvTextures(); },
         updateUvWorkspace: drawUvWorkspace,
         setPickMode: mode => {

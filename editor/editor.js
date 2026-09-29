@@ -33,7 +33,6 @@ export class Editor {
             onAddBone: parentIndex => this.addBone(parentIndex),
             onRemoveBone: index => this.removeBone(index),
             onKeyBone: (index, time) => this.keyBonePose(index, time),
-            onKeyBone: (index, time) => this.keyBonePose(index, time),
             onPlayAnimation: () => this.playAnimation(),
             onImportMesh: file => this.importMesh(file),
             onImportTexture: file => this.importTexture(file),
@@ -152,18 +151,122 @@ export class Editor {
 
     async importMesh(file) {
         const data = JSON.parse(await file.text());
+        if (Array.isArray(data.meshes)) {
+            await this.importSceneData(data);
+            return;
+        }
         let vertices = data.vertices || [];
         if (vertices.length && typeof vertices[0] === 'number') {
             vertices = Array.from({ length: vertices.length / 3 }, (_, index) => vertices.slice(index * 3, index * 3 + 3));
         }
         let faces = data.faces || data.indices || [];
-        if (faces.length && typeof faces[0] === 'number') faces = [faces];
-        if (faces.length && faces[0].length === 3 && data.indices) faces = faces;
+        if (faces.length && typeof faces[0] === 'number') {
+            faces = faces.length % 3 === 0
+                ? Array.from({ length: faces.length / 3 }, (_, index) => faces.slice(index * 3, index * 3 + 3))
+                : [faces];
+        }
         const mesh = Mesh.createFromData(new Material({ color: [0.78, 0.84, 0.92] }), { vertices, faces });
         mesh.name = file.name.replace(/\.[^.]+$/, '') || 'Imported Mesh';
         mesh.position = [0, 0.5, 0];
         this.scene.add(mesh);
         this.select(mesh);
+    }
+
+    async importSceneData(data) {
+        const textureIds = new Map();
+        for (const assetData of data.textureAssets || []) {
+            const asset = await this.textureLibrary.importExportedAsset(assetData);
+            textureIds.set(assetData.id, asset.id);
+        }
+        const resolveTexture = id => this.textureLibrary.get(textureIds.get(id) || id);
+        const importedMeshes = [];
+        for (const meshData of data.meshes) {
+            const mesh = new Mesh(new Material({ color: [...(meshData.color || [0.78, 0.84, 0.92])] }));
+            if (meshData.polygons) {
+                mesh.polygons = meshData.polygons.map(polygon => polygon.map(vertex => [...vertex]));
+            } else {
+                let vertices = meshData.vertices || [];
+                if (vertices.length && typeof vertices[0] === 'number') {
+                    vertices = Array.from({ length: vertices.length / 3 }, (_, index) => vertices.slice(index * 3, index * 3 + 3));
+                }
+                let faces = meshData.faces || meshData.indices || [];
+                if (faces.length && typeof faces[0] === 'number') {
+                    faces = faces.length % 3 === 0
+                        ? Array.from({ length: faces.length / 3 }, (_, index) => faces.slice(index * 3, index * 3 + 3))
+                        : [faces];
+                }
+                mesh.polygons = faces.map(face => face.map(index => [...vertices[index]]));
+            }
+            mesh.name = meshData.name || 'Imported Mesh';
+            mesh.position = [...(meshData.position || [0, 0, 0])];
+            mesh.rotation = [...(meshData.rotation || [0, 0, 0])];
+            mesh.scale = [...(meshData.scale || [1, 1, 1])];
+            mesh.faceColors = (meshData.faceColors || []).map(color => [...color]);
+            mesh.faceUvs = (meshData.faceUvs || []).map(faceUvs => faceUvs.map(uv => [...uv]));
+            mesh.faceUvTransforms = (meshData.faceUvTransforms || []).map(transform => ({
+                scale: [...(transform.scale || [1, 1])],
+                offset: [...(transform.offset || [0, 0])],
+                rotation: transform.rotation || 0,
+                flipX: !!transform.flipX,
+                flipY: !!transform.flipY
+            }));
+            mesh.rebuildRenderData();
+
+            const boneMap = new Map();
+            (meshData.bones || []).forEach(boneData => {
+                const bone = mesh.skeleton.addBone(boneData.name || `Bone ${mesh.skeleton.bones.length + 1}`);
+                bone.position = [...(boneData.position || [0, 0, 0])];
+                bone.rotation = [...(boneData.rotation || [0, 0, 0])];
+                bone.scale = [...(boneData.scale || [1, 1, 1])];
+                bone.length = boneData.length || 0.5;
+                bone.bindPosition = [...(boneData.bindPosition || bone.position)];
+                bone.bindRotation = [...(boneData.bindRotation || bone.rotation)];
+                boneMap.set(bone.name, bone);
+            });
+            (meshData.bones || []).forEach(boneData => {
+                const bone = boneMap.get(boneData.name);
+                const parent = boneMap.get(boneData.parent);
+                if (bone && parent) {
+                    bone.parent = parent;
+                    parent.children.push(bone);
+                }
+            });
+            mesh.selectedBone = mesh.skeleton.bones.length ? 0 : null;
+
+            meshData.vertexWeights?.forEach((polygonWeights, faceIndex) => polygonWeights.forEach((entry, vertexIndex) => {
+                const vertex = mesh.polygons[faceIndex]?.[vertexIndex];
+                if (!vertex || !entry.weights?.length) return;
+                const weights = new Map();
+                entry.weights.forEach(weight => {
+                    const bone = boneMap.get(weight.bone);
+                    if (bone) weights.set(bone, weight.weight);
+                });
+                if (weights.size) mesh.vertexWeights.set(vertex, {
+                    bindPosition: [...(entry.bindPosition || vertex)],
+                    weights
+                });
+            }));
+
+            mesh.textureAssetId = textureIds.get(meshData.textureAssetId) || meshData.textureAssetId || null;
+            const meshTexture = resolveTexture(meshData.textureAssetId);
+            mesh.material.texture = meshTexture?.texture || null;
+            mesh.material.useTexture = !!mesh.material.texture;
+            mesh.faceTextureIds = (meshData.faceTextureIds || []).map(id => textureIds.get(id) || id || null);
+            mesh.faceTextures = mesh.faceTextureIds.map(id => resolveTexture(id)?.texture || null);
+
+            if (meshData.animation) {
+                const clip = new AnimationClip(meshData.animation.name || 'Imported Animation', meshData.animation.duration || 1);
+                (meshData.animation.tracks || []).forEach(track => {
+                    if (track.boneName) track.times.forEach((time, index) => clip.addBoneKeyframe(track.boneName, track.property, time, track.values[index]));
+                    else clip.addTrack(track.property, [...track.times], track.values.map(value => [...value]));
+                });
+                mesh.animationClip = clip;
+            }
+            this.scene.add(mesh);
+            importedMeshes.push(mesh);
+        }
+        this.ui.refreshTextures();
+        if (importedMeshes.length) this.select(importedMeshes[importedMeshes.length - 1]);
     }
 
     addCube() {
@@ -248,11 +351,12 @@ export class Editor {
         this.gizmos.syncFromCamera();
     }
 
-    exportScene() {
+    async exportScene() {
         const data = {
             format: 'lightweight-3d-scene',
             version: 1,
             coordinateSystem: { handedness: 'right', upAxis: 'Y', units: 'editor' },
+            textureAssets: await this.textureLibrary.getExportData(),
             meshes: this.scene.meshes.map(mesh => ({
                 name: mesh.name,
                 position: mesh.position,

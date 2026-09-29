@@ -14,6 +14,9 @@ camera.position = [0, 1.5, 4];
 
 let editor;
 let lastTime = performance.now();
+let fpsWindowStart = lastTime;
+let measuredFrames = 0;
+let measuredWorkMs = 0;
 
 async function init() {
     await renderer.ready;
@@ -44,10 +47,20 @@ async function init() {
 
 function loop() {
     const now = performance.now();
+    const workStart = performance.now();
     scene.update(Math.min(0.1, (now - lastTime) / 1000));
     lastTime = now;
     editor.update();
     renderer.render(scene, camera);
+    measuredWorkMs += performance.now() - workStart;
+    measuredFrames++;
+    const windowElapsed = performance.now() - fpsWindowStart;
+    if (windowElapsed >= 250) {
+        editor.ui.setInternalFps(measuredFrames * 1000 / measuredWorkMs, measuredWorkMs / measuredFrames);
+        measuredFrames = 0;
+        measuredWorkMs = 0;
+        fpsWindowStart = performance.now();
+    }
     requestAnimationFrame(loop);
 }
 

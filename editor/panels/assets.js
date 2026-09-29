@@ -14,7 +14,7 @@ export function createAssetsPanel(textureLibrary, onImportMesh, onImportTexture)
 
     const importLabel = document.createElement('label');
     importLabel.className = 'editor-button';
-    importLabel.textContent = 'Import mesh JSON';
+    importLabel.textContent = 'Import exported scene or mesh';
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.json,application/json';
