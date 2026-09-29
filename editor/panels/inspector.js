@@ -1,8 +1,6 @@
-import { loadTextureBlob } from '../../engine/loader.js';
-
 const faceNames = ['Front', 'Back', 'Left', 'Right', 'Top', 'Bottom'];
 
-export function createInspectorPanel(gl, onSelectFace) {
+export function createInspectorPanel(gl, textureLibrary, onSelectFace) {
     const panel = document.createElement('div');
     panel.className = 'editor-panel';
 
@@ -56,6 +54,63 @@ export function createInspectorPanel(gl, onSelectFace) {
         });
         group.appendChild(fields);
         info.appendChild(group);
+    }
+
+    function addTextureSelect(label, selectedId, onChange) {
+        const group = document.createElement('div');
+        group.className = 'field-group';
+        const labelElement = document.createElement('label');
+        labelElement.className = 'field-label';
+        labelElement.textContent = label;
+        group.appendChild(labelElement);
+        const select = document.createElement('select');
+        select.className = 'editor-input';
+        const empty = document.createElement('option');
+        empty.value = '';
+        empty.textContent = 'No image';
+        select.appendChild(empty);
+        textureLibrary.assets.forEach(asset => {
+            const option = document.createElement('option');
+            option.value = asset.id;
+            option.textContent = asset.name;
+            select.appendChild(option);
+        });
+        select.value = selectedId || '';
+        select.addEventListener('change', () => onChange(textureLibrary.get(select.value)));
+        group.appendChild(select);
+        return group;
+    }
+
+    function addTextureUpload(label, onTexture) {
+        const group = document.createElement('div');
+        group.className = 'field-group';
+        const labelElement = document.createElement('label');
+        labelElement.className = 'field-label';
+        labelElement.textContent = label;
+        group.appendChild(labelElement);
+        const file = document.createElement('input');
+        file.className = 'editor-input';
+        file.type = 'file';
+        file.accept = 'image/*';
+        file.addEventListener('change', async () => {
+            if (!file.files[0]) return;
+            const asset = await textureLibrary.addFile(file.files[0]);
+            onTexture(asset);
+            renderFaceEditor();
+        });
+        group.appendChild(file);
+        return group;
+    }
+
+    function addCheckbox(label, checked, onChange) {
+        const group = document.createElement('label');
+        group.className = 'check-row field-group';
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.checked = checked;
+        input.addEventListener('change', () => onChange(input.checked));
+        group.append(input, document.createTextNode(label));
+        return group;
     }
 
     function renderFaceEditor() {
@@ -149,22 +204,25 @@ export function createInspectorPanel(gl, onSelectFace) {
         colorGroup.appendChild(colorRow);
         info.appendChild(colorGroup);
 
-        const textureGroup = document.createElement('div');
-        textureGroup.className = 'field-group';
-        const textureLabel = document.createElement('label');
-        textureLabel.className = 'field-label';
-        textureLabel.textContent = 'Image for this face (WebP or image)';
-        textureGroup.appendChild(textureLabel);
-        const file = document.createElement('input');
-        file.className = 'editor-input';
-        file.type = 'file';
-        file.accept = 'image/webp,image/*';
-        file.addEventListener('change', async () => {
-            if (!file.files[0]) return;
-            currentMesh.faceTextures[currentFace] = await loadTextureBlob(file.files[0], gl);
-        });
-        textureGroup.appendChild(file);
-        info.appendChild(textureGroup);
+        info.appendChild(addTextureSelect('Mesh image', currentMesh.textureAssetId, asset => {
+            currentMesh.textureAssetId = asset?.id || null;
+            currentMesh.material.texture = asset?.texture || null;
+            currentMesh.material.useTexture = !!asset;
+        }));
+        info.appendChild(addTextureUpload('Add image to library', asset => {
+            currentMesh.textureAssetId = asset.id;
+            currentMesh.material.texture = asset.texture;
+            currentMesh.material.useTexture = true;
+        }));
+
+        info.appendChild(addTextureSelect('Face image override', currentMesh.faceTextureIds[currentFace], asset => {
+            currentMesh.faceTextureIds[currentFace] = asset?.id || null;
+            currentMesh.faceTextures[currentFace] = asset?.texture || null;
+        }));
+        info.appendChild(addTextureUpload('Add face image', asset => {
+            currentMesh.faceTextureIds[currentFace] = asset.id;
+            currentMesh.faceTextures[currentFace] = asset.texture;
+        }));
 
         const transform = currentMesh.faceUvTransforms[currentFace];
         const uvControls = document.createElement('div');
@@ -177,6 +235,8 @@ export function createInspectorPanel(gl, onSelectFace) {
             uvControls.appendChild(addField(label, target[index], value => { target[index] = value; }));
         });
         uvControls.appendChild(addField('Rotation (degrees)', transform.rotation * 180 / Math.PI, value => { transform.rotation = value * Math.PI / 180; }));
+        uvControls.appendChild(addCheckbox('Reflect image horizontally', !!transform.flipX, value => { transform.flipX = value; }));
+        uvControls.appendChild(addCheckbox('Reflect image vertically', !!transform.flipY, value => { transform.flipY = value; }));
         info.appendChild(uvControls);
     }
 
@@ -186,5 +246,5 @@ export function createInspectorPanel(gl, onSelectFace) {
         renderFaceEditor();
     }
 
-    return { element: panel, setMesh, setFace: faceIndex => { currentFace = faceIndex; renderFaceEditor(); } };
+    return { element: panel, setMesh, setFace: faceIndex => { currentFace = faceIndex; renderFaceEditor(); }, refresh: renderFaceEditor };
 }

@@ -22,7 +22,9 @@ export class Mesh {
         this.uvBuffer = null;
         this.faceColors = [];
         this.faceTextures = [];
+        this.faceTextureIds = [];
         this.faceUvTransforms = [];
+        this.textureAssetId = null;
         this.faceCount = 0;
         this.selectedFace = -1;
         this.polygons = [];
@@ -127,7 +129,8 @@ export class Mesh {
         this.faceCount = this.polygons.length;
         while (this.faceColors.length < this.faceCount) this.faceColors.push([1, 1, 1]);
         while (this.faceTextures.length < this.faceCount) this.faceTextures.push(null);
-        while (this.faceUvTransforms.length < this.faceCount) this.faceUvTransforms.push({ scale: [1, 1], offset: [0, 0], rotation: 0 });
+        while (this.faceTextureIds.length < this.faceCount) this.faceTextureIds.push(null);
+        while (this.faceUvTransforms.length < this.faceCount) this.faceUvTransforms.push({ scale: [1, 1], offset: [0, 0], rotation: 0, flipX: false, flipY: false });
         if (this.vao) this.invalidateBuffers();
     }
 
@@ -232,12 +235,18 @@ export class Mesh {
         gl.uniformMatrix4fv(uModel, false, this.getModelMatrix());
         for (let faceIndex = 0; faceIndex < this.faceCount; faceIndex++) {
             const color = this.faceColors[faceIndex] || this.material.color;
-            const texture = this.faceTextures[faceIndex];
+            const texture = this.faceTextures[faceIndex] || (this.material.useTexture ? this.material.texture : null);
             const transform = this.faceUvTransforms[faceIndex];
             gl.uniform3fv(uColor, new Float32Array(color));
             gl.uniform1i(uUseTexture, texture ? 1 : 0);
             gl.uniform1f(uFaceSelected, this.selectedFace === faceIndex ? 1 : 0);
-            gl.uniform4f(uUVTransform, transform.scale[0], transform.scale[1], transform.offset[0], transform.offset[1]);
+            gl.uniform4f(
+                uUVTransform,
+                transform.scale[0] * (transform.flipX ? -1 : 1),
+                transform.scale[1] * (transform.flipY ? -1 : 1),
+                transform.offset[0],
+                transform.offset[1]
+            );
             gl.uniform1f(uUVRotation, transform.rotation);
             if (texture) {
                 gl.activeTexture(gl.TEXTURE0);

@@ -3,7 +3,7 @@ import { createInspectorPanel } from './panels/inspector.js';
 import { createAssetsPanel } from './panels/assets.js';
 
 export function createUI(root, options) {
-    const { scene, onSelect, onSelectFace, onSetPickMode, onAddCube, onAddFace, onAddVertex, onAddBone, onPlayAnimation, onImportMesh, onDelete, onResetCamera, onExport } = options;
+    const { scene, onSelect, onSelectFace, onSetPickMode, onAddCube, onAddFace, onAddVertex, onAddBone, onPlayAnimation, onImportMesh, onImportTexture, onDelete, onResetCamera, onExport } = options;
     root.style.pointerEvents = 'none';
     root.innerHTML = '';
 
@@ -35,6 +35,11 @@ export function createUI(root, options) {
         .face-button:hover, .face-button.selected { background: #6a4e1c; border-color: #ffd071; color: #fff; }
         .color-row { display: flex; align-items: center; gap: 8px; }
         .color-input { width: 42px; height: 28px; border: 0; padding: 0; background: none; }
+        .check-row { display: flex; align-items: center; gap: 7px; color: #c8d4e2; text-transform: none; }
+        .check-row input { width: auto; }
+        .asset-section-title { margin-top: 18px; }
+        .asset-list { display: grid; gap: 4px; margin-bottom: 8px; color: #c8d4e2; }
+        .asset-item { padding: 5px 7px; background: #101722; border: 1px solid #26384d; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         @media (max-width: 700px) { .editor-panels { grid-template-columns: 1fr; } .editor-toolbar { flex-wrap: wrap; } .editor-title { width: 100%; } }
     `;
     root.appendChild(style);
@@ -90,8 +95,8 @@ export function createUI(root, options) {
     container.appendChild(panels);
 
     const hierarchy = createHierarchyPanel(scene, onSelect);
-    const inspector = createInspectorPanel(options.gl, onSelectFace);
-    const assets = createAssetsPanel(onImportMesh);
+    const inspector = createInspectorPanel(options.gl, options.textureLibrary, onSelectFace);
+    const assets = createAssetsPanel(options.textureLibrary, onImportMesh, onImportTexture);
 
     panels.appendChild(hierarchy.element);
     panels.appendChild(inspector.element);
@@ -101,6 +106,7 @@ export function createUI(root, options) {
         setSelected: mesh => inspector.setMesh(mesh),
         setFace: faceIndex => inspector.setFace(faceIndex),
         refreshHierarchy: hierarchy.refresh,
+        refreshTextures: () => { assets.refresh(); inspector.refresh(); },
         setPickMode: mode => onSetPickMode(mode)
     };
 

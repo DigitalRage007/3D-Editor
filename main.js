@@ -37,6 +37,8 @@ async function init() {
     scene.add(cube);
 
     editor = new Editor(scene, camera, renderer);
+    if (tex) editor.textureLibrary.addTexture('example.webp', tex);
+    editor.ui.refreshTextures();
     loop();
 }
 

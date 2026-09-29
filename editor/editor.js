@@ -3,17 +3,20 @@ import { Gizmos } from './gizmos.js';
 import { Mesh } from '../engine/mesh.js';
 import { Material } from '../engine/material.js';
 import { AnimationClip } from '../engine/animation.js';
+import { TextureLibrary } from './textureLibrary.js';
 
 export class Editor {
     constructor(scene, camera, renderer) {
         this.scene = scene;
         this.camera = camera;
         this.renderer = renderer;
+        this.textureLibrary = new TextureLibrary(renderer.gl);
 
         this.uiRoot = document.getElementById('ui-root');
         this.ui = createUI(this.uiRoot, {
             scene,
             gl: renderer.gl,
+            textureLibrary: this.textureLibrary,
             onSelect: mesh => this.select(mesh),
             onSelectFace: faceIndex => this.selectFace(faceIndex),
             onSetPickMode: mode => this.gizmos.setPickMode(mode),
@@ -23,6 +26,7 @@ export class Editor {
             onAddBone: () => this.addBone(),
             onPlayAnimation: () => this.playAnimation(),
             onImportMesh: file => this.importMesh(file),
+            onImportTexture: file => this.importTexture(file),
             onDelete: () => this.deleteSelected(),
             onResetCamera: () => this.resetCamera(),
             onExport: () => this.exportScene()
@@ -44,6 +48,11 @@ export class Editor {
 
     update() {
         this.gizmos.update();
+    }
+
+    async importTexture(file) {
+        await this.textureLibrary.addFile(file);
+        this.ui.refreshTextures();
     }
 
     select(mesh) {
@@ -136,6 +145,8 @@ export class Editor {
                 color: mesh.material.color,
                 polygons: mesh.polygons,
                 faceColors: mesh.faceColors,
+                textureAssetId: mesh.textureAssetId,
+                faceTextureIds: mesh.faceTextureIds,
                 faceUvTransforms: mesh.faceUvTransforms,
                 bones: mesh.skeleton.bones.map(bone => ({ name: bone.name, parent: bone.parent?.name || null, position: bone.position, rotation: bone.rotation, scale: bone.scale }))
             }))
