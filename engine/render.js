@@ -49,6 +49,12 @@ export class Renderer {
             uUVRotation: gl.getUniformLocation(prog, 'uUVRotation'),
             uUVCenter: gl.getUniformLocation(prog, 'uUVCenter'),
             uFaceSelected: gl.getUniformLocation(prog, 'uFaceSelected'),
+            uToonShading: gl.getUniformLocation(prog, 'uToonShading'),
+            uLightDirection: gl.getUniformLocation(prog, 'uLightDirection'),
+            uLightColor: gl.getUniformLocation(prog, 'uLightColor'),
+            uLightIntensity: gl.getUniformLocation(prog, 'uLightIntensity'),
+            uLightThreshold: gl.getUniformLocation(prog, 'uLightThreshold'),
+            uShadeColor: gl.getUniformLocation(prog, 'uShadeColor'),
             uInstanced: gl.getUniformLocation(prog, 'uInstanced'),
             aInstance: [0, 1, 2, 3].map(index => gl.getAttribLocation(prog, `aInstance${index}`))
         };
@@ -88,6 +94,16 @@ export class Renderer {
 
         gl.uniformMatrix4fv(this.uniforms.uView, false, view);
         gl.uniformMatrix4fv(this.uniforms.uProj, false, proj);
+        const light = scene.light;
+        if (light) {
+            const lightLength = Math.hypot(...light.direction);
+            const lightDirection = lightLength > 1e-8 ? light.direction.map(value => value / lightLength) : [0, -1, 0];
+            gl.uniform3fv(this.uniforms.uLightDirection, new Float32Array(lightDirection));
+            gl.uniform3fv(this.uniforms.uLightColor, new Float32Array(light.color));
+            gl.uniform1f(this.uniforms.uLightIntensity, light.intensity);
+            gl.uniform1f(this.uniforms.uLightThreshold, light.threshold);
+            gl.uniform3fv(this.uniforms.uShadeColor, new Float32Array(light.shadeColor));
+        }
 
         const transparentFaces = [];
         const opaqueMeshes = [];
@@ -153,10 +169,13 @@ export class Renderer {
         });
         gl.uniformMatrix4fv(this.uniforms.uModel, false, identityMatrix());
         gl.uniform1f(this.uniforms.uInstanced, 1);
+        gl.uniform1f(this.uniforms.uToonShading, template.material.shading === 'toon' ? 1 : 0);
 
         if (template.vertexWeights.size && template.skinningFrame !== frameId) {
             gl.bindBuffer(gl.ARRAY_BUFFER, template.positionBuffer);
             gl.bufferData(gl.ARRAY_BUFFER, template.getDeformedVertices(), gl.DYNAMIC_DRAW);
+            gl.bindBuffer(gl.ARRAY_BUFFER, template.normalBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, template.getDeformedNormals(), gl.DYNAMIC_DRAW);
             template.skinningFrame = frameId;
         }
         const uniforms = template.getUniformLocations(gl, this.program);
@@ -214,6 +233,7 @@ export class Renderer {
         gl.vertexAttrib2f(uv, 0, 0);
         gl.uniformMatrix4fv(this.uniforms.uModel, false, identityMatrix());
         gl.uniform1f(this.uniforms.uInstanced, 0);
+        gl.uniform1f(this.uniforms.uToonShading, 0);
         gl.uniform4fv(this.uniforms.uColor, new Float32Array([1, 1, 1, 1]));
         gl.uniform1i(this.uniforms.uUseTexture, 0);
         gl.uniform1f(this.uniforms.uFaceSelected, 0);

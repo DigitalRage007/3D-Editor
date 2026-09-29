@@ -3,6 +3,7 @@ import { Gizmos } from './gizmos.js';
 import { Mesh } from '../engine/mesh.js';
 import { Material } from '../engine/material.js';
 import { AnimationClip } from '../engine/animation.js';
+import { DirectionalLight } from '../engine/light.js';
 import { TextureLibrary } from './textureLibrary.js';
 
 export class Editor {
@@ -45,7 +46,8 @@ export class Editor {
             onSetAnimationDuration: duration => this.setAnimationDuration(duration),
             onImportMesh: file => this.importMesh(file),
             onImportTexture: file => this.importTexture(file),
-            onDelete: () => this.deleteSelected(),
+            onDelete: mesh => this.deleteSelected(mesh),
+            onReorderMesh: (mesh, index) => this.reorderMesh(mesh, index),
             onResetCamera: () => this.resetCamera(),
             onExport: () => this.exportScene(),
             onUndo: () => this.undo(),
@@ -250,6 +252,12 @@ export class Editor {
     }
 
     async importSceneData(data) {
+        if (data.light) {
+            const importedLight = new DirectionalLight(data.light);
+            if (this.scene.light) Object.assign(this.scene.light, importedLight);
+            else this.scene.light = importedLight;
+            this.ui.refreshLight();
+        }
         const textureIds = new Map();
         for (const assetData of data.textureAssets || []) {
             const asset = await this.textureLibrary.importExportedAsset(assetData);
@@ -258,7 +266,7 @@ export class Editor {
         const resolveTexture = id => this.textureLibrary.get(textureIds.get(id) || id);
         const importedMeshes = [];
         for (const meshData of data.meshes) {
-            const mesh = new Mesh(new Material({ color: [...(meshData.color || [0.78, 0.84, 0.92])] }));
+            const mesh = new Mesh(new Material({ color: [...(meshData.color || [0.78, 0.84, 0.92])], shading: meshData.shading || 'toon' }));
             if (meshData.polygons) {
                 mesh.polygons = meshData.polygons.map(polygon => polygon.map(vertex => [...vertex]));
             } else {
@@ -410,7 +418,8 @@ export class Editor {
         const duplicate = new Mesh(new Material({
             color: [...source.material.color],
             useTexture: source.material.useTexture,
-            texture: source.material.texture
+            texture: source.material.texture,
+            shading: source.material.shading
         }));
         duplicate.name = `${source.name} Copy`;
         duplicate.position = source.position.map((value, axis) => value + (axis === 0 ? 1 : 0));
@@ -461,11 +470,22 @@ export class Editor {
         this.select(duplicate);
     }
 
-    deleteSelected() {
-        if (!this.selected) return;
+    deleteSelected(mesh = this.selected) {
+        if (!mesh) return;
+        const index = this.scene.meshes.indexOf(mesh);
+        if (index < 0) return;
         this.recordHistory();
-        this.scene.remove(this.selected);
-        this.select(this.scene.meshes[this.scene.meshes.length - 1] || null);
+        this.scene.remove(mesh);
+        if (mesh === this.selected) this.select(this.scene.meshes[Math.min(index, this.scene.meshes.length - 1)] || null);
+        else this.ui.refreshHierarchy();
+    }
+
+    reorderMesh(mesh, index) {
+        const currentIndex = this.scene.meshes.indexOf(mesh);
+        if (currentIndex < 0 || currentIndex === index) return;
+        this.recordHistory();
+        this.scene.move(mesh, index);
+        this.ui.refreshHierarchy();
     }
 
     resetCamera() {
@@ -476,6 +496,14 @@ export class Editor {
 
     snapshotScene() {
         const snapshot = {
+            light: this.scene.light ? {
+                name: this.scene.light.name,
+                direction: this.scene.light.direction,
+                color: this.scene.light.color,
+                intensity: this.scene.light.intensity,
+                threshold: this.scene.light.threshold,
+                shadeColor: this.scene.light.shadeColor
+            } : null,
             selectedIndex: this.scene.meshes.indexOf(this.selected),
             meshes: this.scene.meshes.map(mesh => ({
                 name: mesh.name,
@@ -483,6 +511,7 @@ export class Editor {
                 rotation: mesh.rotation,
                 scale: mesh.scale,
                 color: mesh.material.color,
+                shading: mesh.material.shading,
                 polygons: mesh.polygons,
                 faceColors: mesh.faceColors,
                 textureAssetId: mesh.textureAssetId,
@@ -535,6 +564,10 @@ export class Editor {
     async restoreHistorySnapshot(snapshot) {
         this.scene.meshes.length = 0;
         await this.importSceneData(snapshot);
+        if (snapshot.light) {
+            if (!this.scene.light) this.scene.light = new DirectionalLight(snapshot.light);
+            else Object.assign(this.scene.light, new DirectionalLight(snapshot.light));
+        } else this.scene.light = null;
         snapshot.meshes.forEach((meshData, index) => {
             const mesh = this.scene.meshes[index];
             if (!mesh) return;
@@ -564,6 +597,14 @@ export class Editor {
             format: 'lightweight-3d-scene',
             version: 1,
             coordinateSystem: { handedness: 'right', upAxis: 'Y', units: 'editor' },
+            light: this.scene.light ? {
+                name: this.scene.light.name,
+                direction: this.scene.light.direction,
+                color: this.scene.light.color,
+                intensity: this.scene.light.intensity,
+                threshold: this.scene.light.threshold,
+                shadeColor: this.scene.light.shadeColor
+            } : null,
             textureAssets: await this.textureLibrary.getExportData(),
             meshes: this.scene.meshes.map(mesh => ({
                 name: mesh.name,
@@ -571,6 +612,7 @@ export class Editor {
                 rotation: mesh.rotation,
                 scale: mesh.scale,
                 color: mesh.material.color,
+                shading: mesh.material.shading,
                 polygons: mesh.polygons,
                 faceColors: mesh.faceColors,
                 textureAssetId: mesh.textureAssetId,

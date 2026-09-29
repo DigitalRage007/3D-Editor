@@ -2,9 +2,10 @@ import { createHierarchyPanel } from './panels/hierarchy.js';
 import { createInspectorPanel } from './panels/inspector.js';
 import { createAssetsPanel } from './panels/assets.js';
 import { createBonesPanel } from './panels/bones.js';
+import { createLightingPanel } from './panels/lighting.js';
 
 export function createUI(root, options) {
-    const { scene, onSelect, onSelectFace, onSetPickMode, onAddCube, onAddPlane, onAddSphere, onAddCylinder, onAddBatch, onDuplicate, onAddFace, onExtrudeFace, onMergeFace, onMergeVertices, onAddVertex, onAddBone, onRemoveBone, onCreateAnimation, onKeyPose, onDeleteBoneKeys, onSeekAnimation, onToggleAnimation, onRenameAnimation, onSetAnimationDuration, onImportMesh, onImportTexture, onDelete, onResetCamera, onExport, onUndo, onRedo, onHistory = () => {} } = options;
+    const { scene, onSelect, onSelectFace, onSetPickMode, onAddCube, onAddPlane, onAddSphere, onAddCylinder, onAddBatch, onDuplicate, onAddFace, onExtrudeFace, onMergeFace, onMergeVertices, onAddVertex, onAddBone, onRemoveBone, onCreateAnimation, onKeyPose, onDeleteBoneKeys, onSeekAnimation, onToggleAnimation, onRenameAnimation, onSetAnimationDuration, onImportMesh, onImportTexture, onDelete, onReorderMesh, onResetCamera, onExport, onUndo, onRedo, onHistory = () => {} } = options;
     root.style.pointerEvents = 'none';
     root.innerHTML = '';
 
@@ -13,14 +14,10 @@ export function createUI(root, options) {
         #ui-root { color: #e8edf5; font: 13px/1.4 system-ui, sans-serif; }
         .internal-fps { position: fixed; right: 12px; bottom: 12px; z-index: 20; padding: 6px 9px; color: #bfe9d3; background: rgba(13, 23, 20, 0.92); border: 1px solid rgba(115, 190, 150, 0.45); font: 12px/1.3 ui-monospace, monospace; font-variant-numeric: tabular-nums; pointer-events: none; }
         .polygon-counter { position: fixed; right: 12px; bottom: 44px; z-index: 20; max-width: calc(100vw - 24px); padding: 6px 9px; color: #d7e8fa; background: rgba(15, 23, 34, 0.94); border: 1px solid rgba(130, 165, 202, 0.4); font: 12px/1.3 ui-monospace, monospace; font-variant-numeric: tabular-nums; pointer-events: none; }
-        .editor-shell { position: fixed; top: 12px; left: 12px; z-index: 10; display: flex; flex-direction: column; gap: 8px; padding: 12px; width: min(calc(100vw - 24px), 920px); height: min(72vh, 680px); min-width: min(320px, calc(100vw - 24px)); min-height: min(180px, calc(100vh - 24px)); max-height: calc(100vh - 24px); box-sizing: border-box; overflow: auto; pointer-events: none; }
+        .editor-shell { position: fixed; top: 12px; left: 12px; z-index: 10; display: flex; flex-direction: column; gap: 8px; width: min(calc(100vw - 24px), 920px); max-height: calc(100vh - 24px); box-sizing: border-box; overflow: visible; pointer-events: none; }
         .editor-toolbar { background: rgba(16, 22, 32, 0.92); border: 1px solid rgba(164, 183, 211, 0.2); box-shadow: 0 10px 30px rgba(0,0,0,.25); pointer-events: auto; }
         .editor-toolbar { display: flex; flex-direction: column; gap: 5px; padding: 7px; }
         .editor-toolbar-head { position: relative; display: flex; align-items: center; gap: 6px; min-height: 26px; }
-        .hud-drag-handle { position: absolute; top: 0; left: 50%; display: flex; align-items: center; justify-content: center; gap: 3px; width: 54px; height: 24px; padding: 0; border: 1px solid #3b526d; background: #101722; cursor: move; pointer-events: auto; touch-action: none; transform: translateX(-50%); }
-        .hud-drag-handle span { width: 3px; height: 3px; border-radius: 50%; background: #9aa9ba; }
-        .hud-resize-handle { position: absolute; right: 1px; bottom: 1px; z-index: 12; width: 22px; height: 22px; padding: 0; border: 0; background: transparent; cursor: nwse-resize; pointer-events: auto; touch-action: none; }
-        .hud-resize-handle::after { position: absolute; right: 3px; bottom: 3px; width: 10px; height: 10px; border-right: 2px solid #9aa9ba; border-bottom: 2px solid #9aa9ba; content: ''; }
         .tool-group { min-width: 0; }
         .tool-group summary { padding: 5px 8px; color: #9ed8ff; background: #101722; border: 1px solid #26384d; cursor: pointer; list-style: none; }
         .tool-group summary::-webkit-details-marker { display: none; }
@@ -32,22 +29,34 @@ export function createUI(root, options) {
         .editor-title { margin: 0 12px 0 4px; font-size: 14px; letter-spacing: .04em; text-transform: uppercase; color: #9ed8ff; }
         .editor-button { border: 1px solid #3b526d; background: #1b2a3b; color: #e8edf5; padding: 6px 10px; cursor: pointer; border-radius: 3px; }
         .editor-button:hover { background: #29425c; }
-        .editor-panels { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-        .editor-panel { min-width: 0; padding: 10px; max-height: calc(100vh - 105px); overflow: auto; scrollbar-width: thin; scrollbar-color: #526c88 #101722; pointer-events: none; background: rgba(16, 22, 32, 0.92); border: 1px solid rgba(164, 183, 211, 0.2); box-shadow: 0 10px 30px rgba(0,0,0,.25); }
+        .editor-panels { display: contents; }
+        .editor-panel { min-width: 0; min-height: 0; padding: 10px; overflow: auto; scrollbar-width: thin; scrollbar-color: #526c88 #101722; pointer-events: auto; background: rgba(16, 22, 32, 0.92); border: 1px solid rgba(164, 183, 211, 0.2); box-shadow: 0 10px 30px rgba(0,0,0,.25); }
         .panel-title { margin: 0 0 8px; color: #9ed8ff; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; }
         .hierarchy-list { list-style: none; padding: 0; margin: 0; }
-        .hierarchy-item:hover, .hierarchy-item.selected { background: #284a68; }
+        .hierarchy-item { display: flex; align-items: center; gap: 4px; padding: 2px; border: 1px solid transparent; }
+        .hierarchy-item:hover, .hierarchy-item.selected { background: #284a68; border-color: #3b526d; }
+        .hierarchy-select { flex: 1; min-width: 0; padding: 5px 7px; border: 0; background: transparent; color: #c8d4e2; text-align: left; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; cursor: pointer; }
+        .hierarchy-delete { width: 28px; height: 28px; border: 1px solid #60464a; background: #321f25; color: #ffc2c2; cursor: pointer; }
+        .hierarchy-delete:hover { background: #733b44; }
         .inspector-empty, .asset-info { color: #9aa9ba; }
         .field-group { margin: 0 0 10px; }
         .field-label { display: block; margin-bottom: 4px; color: #9aa9ba; font-size: 11px; text-transform: uppercase; }
         .vector-fields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
         .editor-input { box-sizing: border-box; width: 100%; min-width: 0; border: 1px solid #3b526d; background: #101722; color: #e8edf5; padding: 5px; pointer-events: auto; }
         .editor-panel button, .editor-panel label, .editor-panel input, .hierarchy-item { pointer-events: auto; }
-        .panel-disclosure { min-width: 0; }
-        .panel-disclosure > summary { padding: 6px 8px; color: #9ed8ff; background: rgba(16, 22, 32, 0.92); border: 1px solid rgba(164, 183, 211, 0.2); cursor: pointer; pointer-events: auto; list-style: none; }
+        .panel-disclosure { position: fixed; z-index: 11; width: min(300px, calc(100vw - 24px)); max-height: min(86vh, 820px); min-height: 34px; overflow: hidden; color: #e8edf5; background: rgba(16, 22, 32, 0.96); border: 1px solid rgba(164, 183, 211, 0.3); box-shadow: 0 10px 30px rgba(0,0,0,.28); pointer-events: auto; }
+        .panel-disclosure:not([open]) { height: auto !important; }
+        .panel-disclosure[open] { display: flex; flex-direction: column; }
+        .panel-disclosure[open] > .editor-panel { flex: 1; }
+        .panel-disclosure > summary { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: 0 0 34px; min-height: 34px; box-sizing: border-box; padding: 4px 7px; color: #9ed8ff; background: rgba(16, 22, 32, 0.98); cursor: pointer; pointer-events: auto; list-style: none; }
         .panel-disclosure > summary::-webkit-details-marker { display: none; }
         .panel-disclosure > summary::before { content: '+'; display: inline-block; width: 18px; color: #ffd071; }
         .panel-disclosure[open] > summary::before { content: '-'; }
+        .panel-drag-handle { position: absolute; top: 4px; left: 50%; width: 42px; height: 25px; padding: 0; border: 1px solid #3b526d; background: #101722; color: #9aa9ba; cursor: move; touch-action: none; transform: translateX(-50%); }
+        .panel-drag-handle:active { color: #ffd071; }
+        .panel-resize-handle { position: absolute; right: 1px; bottom: 1px; z-index: 12; display: none; width: 20px; height: 20px; padding: 0; border: 0; background: transparent; cursor: nwse-resize; pointer-events: auto; touch-action: none; }
+        .panel-disclosure[open] > .panel-resize-handle { display: block; }
+        .panel-resize-handle::after { position: absolute; right: 3px; bottom: 3px; width: 9px; height: 9px; border-right: 2px solid #9aa9ba; border-bottom: 2px solid #9aa9ba; content: ''; }
         .editor-button.selected { background: #284a68; border-color: #9ed8ff; }
         .face-title { margin: 0 0 8px; color: #ffd071; font-weight: 700; }
         .face-buttons { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 12px; }
@@ -97,7 +106,7 @@ export function createUI(root, options) {
         .uv-canvas:active { cursor: grabbing; }
         .editor-shell.uv-mode .uv-workspace { display: flex; }
         .editor-shell.uv-mode .editor-panels { display: none; }
-        @media (max-width: 700px) { .editor-panels { grid-template-columns: 1fr; } .editor-toolbar { flex-wrap: wrap; } .editor-title { width: 100%; } }
+        @media (max-width: 700px) { .editor-toolbar { flex-wrap: wrap; } .editor-title { width: 100%; } }
     `;
     root.appendChild(style);
     const fpsReadout = document.createElement('div');
@@ -120,6 +129,11 @@ export function createUI(root, options) {
             onRedo();
             return;
         }
+        if ((event.key === 'Backspace' || event.key === 'Delete') && !isTextEntry(document.activeElement)) {
+            event.preventDefault();
+            onDelete();
+            return;
+        }
         if (event.key.toLowerCase() !== 'f' || ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
         root.style.display = root.style.display === 'none' ? '' : 'none';
     });
@@ -136,13 +150,6 @@ export function createUI(root, options) {
     title.className = 'editor-title';
     title.textContent = 'Lightweight 3D';
     toolbarHead.appendChild(title);
-    const dragHandle = document.createElement('button');
-    dragHandle.className = 'hud-drag-handle';
-    dragHandle.type = 'button';
-    dragHandle.title = 'Drag to move HUD';
-    dragHandle.setAttribute('aria-label', 'Move HUD');
-    for (let index = 0; index < 6; index++) dragHandle.appendChild(document.createElement('span'));
-    toolbarHead.appendChild(dragHandle);
     toolbar.appendChild(toolbarHead);
     let activeToolGroup = toolbarHead;
 
@@ -233,7 +240,7 @@ export function createUI(root, options) {
     button('+ Bone', () => onAddBone(null));
     button('Delete', onDelete);
 
-    group('Selection Mode', true);
+    group('Selection Mode');
     const modeButtons = document.createElement('div');
     modeButtons.className = 'tool-group-content';
     const modeGroup = activeToolGroup;
@@ -562,79 +569,136 @@ export function createUI(root, options) {
     container.appendChild(toolbar);
     container.appendChild(uvWorkspace);
 
-    const resizeHandle = document.createElement('button');
-    resizeHandle.className = 'hud-resize-handle';
-    resizeHandle.type = 'button';
-    resizeHandle.title = 'Drag to resize HUD';
-    resizeHandle.setAttribute('aria-label', 'Resize HUD');
-    container.appendChild(resizeHandle);
-
-    let moveStart = null;
-    dragHandle.addEventListener('pointerdown', event => {
-        if (event.button !== 0) return;
-        event.preventDefault();
-        const rect = container.getBoundingClientRect();
-        moveStart = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
-        dragHandle.setPointerCapture(event.pointerId);
-    });
-    dragHandle.addEventListener('pointermove', event => {
-        if (!moveStart || moveStart.pointerId !== event.pointerId) return;
-        const maxLeft = Math.max(0, window.innerWidth - Math.min(120, container.offsetWidth));
-        const maxTop = Math.max(0, window.innerHeight - Math.min(80, container.offsetHeight));
-        container.style.left = `${Math.max(0, Math.min(maxLeft, moveStart.left + event.clientX - moveStart.x))}px`;
-        container.style.top = `${Math.max(0, Math.min(maxTop, moveStart.top + event.clientY - moveStart.y))}px`;
-    });
-    const finishMove = event => {
-        if (moveStart?.pointerId === event.pointerId) moveStart = null;
-    };
-    dragHandle.addEventListener('pointerup', finishMove);
-    dragHandle.addEventListener('pointercancel', finishMove);
-
-    let resizeStart = null;
-    resizeHandle.addEventListener('pointerdown', event => {
-        if (event.button !== 0) return;
-        event.preventDefault();
-        const rect = container.getBoundingClientRect();
-        resizeStart = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, width: rect.width, height: rect.height, left: rect.left, top: rect.top };
-        resizeHandle.setPointerCapture(event.pointerId);
-    });
-    resizeHandle.addEventListener('pointermove', event => {
-        if (!resizeStart || resizeStart.pointerId !== event.pointerId) return;
-        const minWidth = Math.min(320, window.innerWidth - 12);
-        const minHeight = Math.min(180, window.innerHeight - 12);
-        const maxWidth = Math.max(minWidth, window.innerWidth - resizeStart.left - 8);
-        const maxHeight = Math.max(minHeight, window.innerHeight - resizeStart.top - 8);
-        container.style.width = `${Math.max(minWidth, Math.min(maxWidth, resizeStart.width + event.clientX - resizeStart.x))}px`;
-        container.style.height = `${Math.max(minHeight, Math.min(maxHeight, resizeStart.height + event.clientY - resizeStart.y))}px`;
-    });
-    const finishResize = event => {
-        if (resizeStart?.pointerId === event.pointerId) resizeStart = null;
-    };
-    resizeHandle.addEventListener('pointerup', finishResize);
-    resizeHandle.addEventListener('pointercancel', finishResize);
-
     const panels = document.createElement('div');
     panels.className = 'editor-panels';
     container.appendChild(panels);
 
-    const hierarchy = createHierarchyPanel(scene, onSelect);
+    const hierarchy = createHierarchyPanel(scene, {
+        onSelect,
+        onDelete,
+        onReorder: onReorderMesh,
+        getSelected: () => selectedMesh
+    });
     const inspector = createInspectorPanel(options.gl, options.textureLibrary, onSelectFace, onHistory);
     const assets = createAssetsPanel(options.textureLibrary, onImportMesh, onImportTexture);
     const bones = createBonesPanel({ onAddBone, onRemoveBone, onCreateAnimation, onKeyPose, onDeleteBoneKeys, onSeekAnimation, onToggleAnimation, onRenameAnimation, onSetAnimationDuration, onHistory });
+    const lighting = createLightingPanel(scene.light, onHistory);
 
-    const panelDisclosure = (label, element, open = false) => {
+    const panelDisclosure = (label, element, index) => {
         const disclosure = document.createElement('details');
         disclosure.className = 'panel-disclosure';
-        disclosure.open = open;
+        disclosure.open = false;
+        disclosure.style.top = `${92 + index * 42}px`;
+        disclosure.style.right = '12px';
+        const positionKey = `lightweight-3d-panel:${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+        try {
+            const savedPosition = JSON.parse(localStorage.getItem(positionKey) || 'null');
+            if (Number.isFinite(savedPosition?.left) && Number.isFinite(savedPosition?.top)) {
+                disclosure.style.left = `${Math.max(0, Math.min(window.innerWidth - 120, savedPosition.left))}px`;
+                disclosure.style.right = 'auto';
+                disclosure.style.top = `${Math.max(0, Math.min(window.innerHeight - 36, savedPosition.top))}px`;
+            }
+            if (Number.isFinite(savedPosition?.width)) disclosure.style.width = `${Math.max(220, Math.min(window.innerWidth - 24, savedPosition.width))}px`;
+            if (Number.isFinite(savedPosition?.height)) {
+                disclosure.style.height = `${Math.max(120, Math.min(window.innerHeight - 24, savedPosition.height))}px`;
+                disclosure.dataset.resized = 'true';
+            }
+        } catch {}
         const summary = document.createElement('summary');
-        summary.textContent = label;
-        disclosure.append(summary, element);
+        const title = document.createElement('span');
+        title.textContent = label;
+        const dragHandle = document.createElement('button');
+        dragHandle.className = 'panel-drag-handle';
+        dragHandle.type = 'button';
+        dragHandle.textContent = ':::';
+        dragHandle.title = `Drag ${label} panel`;
+        dragHandle.setAttribute('aria-label', `Move ${label} panel`);
+        dragHandle.addEventListener('pointerdown', event => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            event.stopPropagation();
+            const rect = disclosure.getBoundingClientRect();
+            dragHandle.setPointerCapture(event.pointerId);
+            disclosure.dataset.dragPointer = String(event.pointerId);
+            disclosure.dataset.dragX = String(event.clientX - rect.left);
+            disclosure.dataset.dragY = String(event.clientY - rect.top);
+            disclosure.style.right = 'auto';
+            disclosure.style.left = `${rect.left}px`;
+        });
+        dragHandle.addEventListener('pointermove', event => {
+            if (disclosure.dataset.dragPointer !== String(event.pointerId)) return;
+            const maxLeft = Math.max(0, window.innerWidth - Math.min(120, disclosure.offsetWidth));
+            const maxTop = Math.max(0, window.innerHeight - 36);
+            const left = Math.max(0, Math.min(maxLeft, event.clientX - Number(disclosure.dataset.dragX)));
+            const top = Math.max(0, Math.min(maxTop, event.clientY - Number(disclosure.dataset.dragY)));
+            disclosure.style.left = `${left}px`;
+            disclosure.style.top = `${top}px`;
+        });
+        const finishPanelDrag = event => {
+            if (disclosure.dataset.dragPointer !== String(event.pointerId)) return;
+            delete disclosure.dataset.dragPointer;
+            delete disclosure.dataset.dragX;
+            delete disclosure.dataset.dragY;
+            try {
+                const rect = disclosure.getBoundingClientRect();
+                const savedPosition = { left: rect.left, top: rect.top };
+                if (disclosure.dataset.resized) Object.assign(savedPosition, { width: rect.width, height: rect.height });
+                localStorage.setItem(positionKey, JSON.stringify(savedPosition));
+            } catch {}
+        };
+        dragHandle.addEventListener('pointerup', finishPanelDrag);
+        dragHandle.addEventListener('pointercancel', finishPanelDrag);
+        const resizeHandle = document.createElement('button');
+        resizeHandle.className = 'panel-resize-handle';
+        resizeHandle.type = 'button';
+        resizeHandle.title = `Drag to resize ${label} panel`;
+        resizeHandle.setAttribute('aria-label', `Resize ${label} panel`);
+        resizeHandle.addEventListener('pointerdown', event => {
+            if (event.button !== 0 || !disclosure.open) return;
+            event.preventDefault();
+            event.stopPropagation();
+            const rect = disclosure.getBoundingClientRect();
+            disclosure.dataset.resizePointer = String(event.pointerId);
+            disclosure.dataset.resizeX = String(event.clientX);
+            disclosure.dataset.resizeY = String(event.clientY);
+            disclosure.dataset.resizeWidth = String(rect.width);
+            disclosure.dataset.resizeHeight = String(rect.height);
+            resizeHandle.setPointerCapture(event.pointerId);
+        });
+        resizeHandle.addEventListener('pointermove', event => {
+            if (disclosure.dataset.resizePointer !== String(event.pointerId)) return;
+            const left = disclosure.getBoundingClientRect().left;
+            const top = disclosure.getBoundingClientRect().top;
+            const minWidth = Math.min(220, window.innerWidth - 24);
+            const minHeight = Math.min(120, window.innerHeight - 24);
+            const maxWidth = Math.max(minWidth, window.innerWidth - left - 8);
+            const maxHeight = Math.max(minHeight, window.innerHeight - top - 8);
+            const width = Number(disclosure.dataset.resizeWidth) + event.clientX - Number(disclosure.dataset.resizeX);
+            const height = Number(disclosure.dataset.resizeHeight) + event.clientY - Number(disclosure.dataset.resizeY);
+            disclosure.style.width = `${Math.max(minWidth, Math.min(maxWidth, width))}px`;
+            disclosure.style.height = `${Math.max(minHeight, Math.min(maxHeight, height))}px`;
+        });
+        const finishPanelResize = event => {
+            if (disclosure.dataset.resizePointer !== String(event.pointerId)) return;
+            ['resizePointer', 'resizeX', 'resizeY', 'resizeWidth', 'resizeHeight'].forEach(key => delete disclosure.dataset[key]);
+            disclosure.dataset.resized = 'true';
+            try {
+                const rect = disclosure.getBoundingClientRect();
+                const savedPosition = JSON.parse(localStorage.getItem(positionKey) || '{}');
+                localStorage.setItem(positionKey, JSON.stringify({ ...savedPosition, left: rect.left, top: rect.top, width: rect.width, height: rect.height }));
+            } catch {}
+        };
+        resizeHandle.addEventListener('pointerup', finishPanelResize);
+        resizeHandle.addEventListener('pointercancel', finishPanelResize);
+        summary.append(title, dragHandle);
+        disclosure.append(summary, element, resizeHandle);
         return disclosure;
     };
-    panels.appendChild(panelDisclosure('Hierarchy', hierarchy.element));
-    panels.appendChild(panelDisclosure('Inspector', inspector.element, true));
-    panels.appendChild(panelDisclosure('Assets', assets.element));
-    panels.appendChild(panelDisclosure('Rig and Animation', bones.element));
+    panels.appendChild(panelDisclosure('Hierarchy', hierarchy.element, 0));
+    panels.appendChild(panelDisclosure('Inspector', inspector.element, 1));
+    panels.appendChild(panelDisclosure('Assets', assets.element, 2));
+    panels.appendChild(panelDisclosure('Rig and Animation', bones.element, 3));
+    panels.appendChild(panelDisclosure('Key Light', lighting.element, 4));
 
     return {
         setSelected: mesh => { selectedMesh = mesh; inspector.setMesh(mesh); bones.setMesh(mesh); refreshUvTextures(); refreshUvTransformControls(); refreshFaceImageControls(); drawUvWorkspace(); },
@@ -644,6 +708,7 @@ export function createUI(root, options) {
         setInternalFps: (fps, frameMs) => { fpsReadout.textContent = `Internal FPS ${Math.round(fps)} | ${frameMs.toFixed(2)} ms`; },
         setPolygonCount: (current, total) => { polygonReadout.textContent = `Current Mesh Polygons / All Polygons: ${current} / ${total}`; },
         refreshTextures: () => { assets.refresh(); inspector.refresh(); refreshUvTextures(); },
+        refreshLight: lighting.refresh,
         updateUvWorkspace: drawUvWorkspace,
         updateAnimationWorkspace: (time, playing) => bones.updatePlayback(time, playing),
         setPickMode: mode => {
@@ -653,6 +718,10 @@ export function createUI(root, options) {
         }
     };
 
+}
+
+function isTextEntry(element) {
+    return ['INPUT', 'TEXTAREA', 'SELECT'].includes(element?.tagName) || element?.isContentEditable;
 }
 
 function pointInPolygon(point, polygon) {

@@ -183,6 +183,22 @@ export function createInspectorPanel(gl, textureLibrary, onSelectFace, onHistory
         name.value = currentMesh.name;
         name.addEventListener('input', () => { onHistory(); currentMesh.name = name.value || 'Mesh'; });
         info.appendChild(name);
+        const shading = document.createElement('select');
+        shading.className = 'editor-input field-group';
+        shading.setAttribute('aria-label', 'Mesh shading mode');
+        [['toon', 'Anime two-tone'], ['flat', 'Flat color']].forEach(([value, label]) => {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = label;
+            shading.appendChild(option);
+        });
+        shading.value = currentMesh.material.shading || 'toon';
+        shading.addEventListener('change', () => {
+            onHistory();
+            currentMesh.material.shading = shading.value;
+            currentMesh.updateRenderQueues();
+        });
+        info.appendChild(shading);
         addVectorField('Position', currentMesh.position, (index, value) => { currentMesh.position[index] = value; });
         addVectorField('Rotation', currentMesh.rotation, (index, value) => { currentMesh.rotation[index] = value; }, true);
         addVectorField('Scale', currentMesh.scale, (index, value) => { currentMesh.scale[index] = value; });

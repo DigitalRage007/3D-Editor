@@ -16,6 +16,7 @@ uniform float uUVRotation;
 uniform vec2 uUVCenter;
 
 varying vec3 vColor;
+varying vec3 vNormal;
 varying vec2 vUV;
 
 void main() {
@@ -29,5 +30,7 @@ void main() {
     if (uInstanced > 0.5) {
         model = mat4(aInstance0, aInstance1, aInstance2, aInstance3);
     }
+    vec3 modelScale = vec3(length(model[0].xyz), length(model[1].xyz), length(model[2].xyz));
+    vNormal = normalize(mat3(model) * (aNormal / max(modelScale, vec3(0.00001))));
     gl_Position = uProj * uView * model * vec4(aPosition, 1.0);
 }

@@ -12,6 +12,7 @@ export class Mesh {
         this.scale = [1, 1, 1];
 
         this.vertices = null;
+        this.normals = null;
         this.colors = null;
         this.uvs = null;
         this.indices = null;
@@ -19,6 +20,7 @@ export class Mesh {
         this.vao = null;
         this.vaoExtension = null;
         this.positionBuffer = null;
+        this.normalBuffer = null;
         this.colorBuffer = null;
         this.uvBuffer = null;
         this.faceColors = [];
@@ -251,7 +253,7 @@ export class Mesh {
         if (this.transparentFaceIndices.length || this.vertexWeights.size || this.skeleton.bones.length || this.selectedFace >= 0) return;
         const batches = this.getDrawBatches(this.opaqueFaceIndices);
         if (batches.some(batch => batch.texture)) return;
-        this.instanceBatchKey = `${this.geometrySignature}:${JSON.stringify(batches.map(batch => [batch.offset, batch.count, batch.color, batch.transform.scale, batch.transform.offset, batch.transform.rotation, batch.transform.flipX, batch.transform.flipY, batch.uvCenter]))}`;
+        this.instanceBatchKey = `${this.geometrySignature}:${this.material.shading}:${JSON.stringify(batches.map(batch => [batch.offset, batch.count, batch.color, batch.transform.scale, batch.transform.offset, batch.transform.rotation, batch.transform.flipX, batch.transform.flipY, batch.uvCenter]))}`;
     }
 
     getInstanceBatchKey() {
@@ -353,6 +355,20 @@ export class Mesh {
             positions.push(...this.getDeformedPoint(vertex, transforms, bindTransforms));
         }));
         return new Float32Array(positions);
+    }
+
+    getDeformedNormals() {
+        const transforms = this.skeleton.getWorldTransforms();
+        const bindTransforms = this.skeleton.getWorldTransforms(true);
+        const normals = [];
+        this.polygons.forEach(polygon => {
+            const positions = polygon.map(vertex => this.getDeformedPoint(vertex, transforms, bindTransforms));
+            const edgeA = positions[1]?.map((value, axis) => value - positions[0][axis]) || [0, 0, 0];
+            const edgeB = positions[2]?.map((value, axis) => value - positions[0][axis]) || [0, 0, 0];
+            const normal = normalize3(cross3(edgeA, edgeB)) || [0, 1, 0];
+            positions.forEach(() => normals.push(...normal));
+        });
+        return new Float32Array(normals);
     }
 
     getVertexWeightData() {
@@ -498,16 +514,21 @@ export class Mesh {
         }));
 
         const vertices = [];
+        const normals = [];
         const colors = [];
         const uvs = [];
         const indices = [];
         this.faceRanges = [];
         this.polygons.forEach((polygon, faceIndex) => {
             const vertexStart = vertices.length / 3;
+            const edgeA = polygon[1]?.map((value, axis) => value - polygon[0][axis]) || [0, 0, 0];
+            const edgeB = polygon[2]?.map((value, axis) => value - polygon[0][axis]) || [0, 0, 0];
+            const normal = normalize3(cross3(edgeA, edgeB)) || [0, 1, 0];
             if (!this.faceUvs[faceIndex]) this.faceUvs[faceIndex] = [];
             polygon.forEach((vertex, vertexIndex) => {
                 vertices.push(...vertex);
                 colors.push(1, 1, 1);
+                normals.push(...normal);
                 if (!this.faceUvs[faceIndex][vertexIndex]) {
                     this.faceUvs[faceIndex][vertexIndex] = defaultFaceUV(faceIndex, vertexIndex, this.polygons.length);
                 }
@@ -519,6 +540,7 @@ export class Mesh {
             this.faceRanges.push({ offset: indices.length - Math.max(0, polygon.length - 2) * 3, count: Math.max(0, polygon.length - 2) * 3 });
         });
         this.vertices = new Float32Array(vertices);
+        this.normals = new Float32Array(normals);
         this.colors = new Float32Array(colors);
         this.uvs = new Float32Array(uvs);
         this.indices = new Uint16Array(indices);
@@ -536,6 +558,7 @@ export class Mesh {
     invalidateBuffers() {
         this.vao = null;
         this.positionBuffer = null;
+        this.normalBuffer = null;
         this.colorBuffer = null;
         this.uvBuffer = null;
     }
@@ -557,6 +580,7 @@ export class Mesh {
         }
 
         const aPos = gl.getAttribLocation(program, 'aPosition');
+        const aNormal = gl.getAttribLocation(program, 'aNormal');
         const aColor = gl.getAttribLocation(program, 'aColor');
         const aUV = gl.getAttribLocation(program, 'aUV');
 
@@ -566,6 +590,12 @@ export class Mesh {
         gl.bufferData(gl.ARRAY_BUFFER, this.vertices, gl.STATIC_DRAW);
         gl.enableVertexAttribArray(aPos);
         gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 0, 0);
+
+        this.normalBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.normalBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, this.normals, gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(aNormal);
+        gl.vertexAttribPointer(aNormal, 3, gl.FLOAT, false, 0, 0);
 
         const cbo = gl.createBuffer();
         this.colorBuffer = cbo;
@@ -627,10 +657,13 @@ export class Mesh {
         const uniforms = this.getUniformLocations(gl, program);
         gl.uniformMatrix4fv(uniforms.uModel, false, this.getModelMatrix());
         gl.uniform1f(uniforms.uInstanced, 0);
+        gl.uniform1f(uniforms.uToonShading, this.material.shading === 'toon' ? 1 : 0);
         if (this.vertexWeights.size) {
             if (frameToken === undefined || this.skinningFrame !== frameToken) {
                 gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
                 gl.bufferData(gl.ARRAY_BUFFER, this.getDeformedVertices(), gl.DYNAMIC_DRAW);
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.normalBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, this.getDeformedNormals(), gl.DYNAMIC_DRAW);
                 this.skinningFrame = frameToken;
             }
         }
@@ -661,6 +694,7 @@ export class Mesh {
             gl.drawElements(gl.TRIANGLES, batchCount, gl.UNSIGNED_SHORT, batchOffset * 2);
         };
         for (const batch of batches) {
+        this.normals = new Float32Array(normals);
             batchOffset = batch.offset;
             batchCount = batch.count;
             batchColor = batch.color;
@@ -728,6 +762,7 @@ export class Mesh {
                 uUVRotation: gl.getUniformLocation(program, 'uUVRotation'),
                 uUVCenter: gl.getUniformLocation(program, 'uUVCenter'),
                 uFaceSelected: gl.getUniformLocation(program, 'uFaceSelected'),
+                uToonShading: gl.getUniformLocation(program, 'uToonShading'),
                 uInstanced: gl.getUniformLocation(program, 'uInstanced')
             };
         }
@@ -738,6 +773,8 @@ export class Mesh {
         if (!this.vao) return;
         gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, this.vertices, gl.STATIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.normalBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, this.normals, gl.STATIC_DRAW);
         gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, this.colors, gl.STATIC_DRAW);
         gl.bindBuffer(gl.ARRAY_BUFFER, this.uvBuffer);
