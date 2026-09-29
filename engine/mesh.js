@@ -71,12 +71,11 @@ export class Mesh {
     setFaceVertex(faceIndex, vertexIndex, position) {
         if (!this.polygons[faceIndex]?.[vertexIndex]) return;
         const previous = this.polygons[faceIndex][vertexIndex];
-        this.polygons.forEach(polygon => polygon.forEach((vertex, otherFace) => {
+        this.polygons.forEach(polygon => polygon.forEach((vertex, otherVertex) => {
             if (vertex === previous || Math.hypot(vertex[0] - previous[0], vertex[1] - previous[1], vertex[2] - previous[2]) < 0.0001) {
-                polygon[otherFace] = [...position];
+                polygon[otherVertex] = [...position];
             }
         }));
-        this.weldNearbyVertices(faceIndex, vertexIndex);
         this.rebuildRenderData();
     }
 

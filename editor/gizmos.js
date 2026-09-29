@@ -73,11 +73,18 @@ export class Gizmos {
         const vertices = this.pickMode === 'face'
             ? pick.mesh.polygons[pick.faceIndex]
             : [pick.mesh.polygons[pick.faceIndex][pick.vertexIndex]];
+        if (this.pickMode === 'vertex') {
+            const position = [...pick.vertexPosition];
+            position[0] += deltaX * amount;
+            position[1] -= deltaY * amount;
+            pick.mesh.setFaceVertex(pick.faceIndex, pick.vertexIndex, position);
+            pick.vertexPosition = position;
+            return;
+        }
         vertices.forEach(vertex => {
             vertex[0] += deltaX * amount;
             vertex[1] -= deltaY * amount;
         });
-        if (this.pickMode === 'vertex') pick.mesh.weldNearbyVertices(pick.faceIndex, pick.vertexIndex);
         pick.mesh.rebuildRenderData();
     }
 
@@ -92,7 +99,7 @@ export class Gizmos {
                 polygon.forEach((vertex, vertexIndex) => {
                     const projected = this.project(vertex, model);
                     const distance = Math.hypot(projected[0] - x, projected[1] - y);
-                    if (distance < (best?.distance ?? 0.08) && distance < 0.08) best = { mesh, faceIndex, vertexIndex, distance, vertex: true };
+                    if (distance < (best?.distance ?? 0.08) && distance < 0.08) best = { mesh, faceIndex, vertexIndex, vertexPosition: [...vertex], distance, vertex: true };
                 });
                 const center = polygon.reduce((sum, vertex) => sum.map((value, axis) => value + vertex[axis] / polygon.length), [0, 0, 0]);
                 const projected = this.project(center, model);

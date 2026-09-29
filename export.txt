@@ -1,0 +1,1461 @@
+ o/*PROJECT TEXT EXPORT
+Readable file contents are grouped by workspace-relative path. Binary image files are listed by path; their bytes are not embedded.
+
+===== FILE: assets/models/cube.json =====
+{
+  "vertices": [],
+  "colors": [],
+  "uvs": [],
+  "indices": []
+}
+
+===== ASSET PATH: assets/textures/example.webp =====
+[Binary image omitted]
+
+===== FILE: editor/editor.js =====
+import { createUI } from './ui.js';
+import { Gizmos } from './gizmos.js';
+import { Mesh } from '../engine/mesh.js';
+import { Material } from '../engine/material.js';
+import { AnimationClip } from '../engine/animation.js';
+
+export class Editor {
+    constructor(scene, camera, renderer) {
+        this.scene = scene;
+        this.camera = camera;
+        this.renderer = renderer;
+
+        this.uiRoot = document.getElementById('ui-root');
+        this.ui = createUI(this.uiRoot, {
+            scene,
+            gl: renderer.gl,
+            onSelect: mesh => this.select(mesh),
+            onSelectFace: faceIndex => this.selectFace(faceIndex),
+            onSetPickMode: mode => this.gizmos.setPickMode(mode),
+            onAddCube: () => this.addCube(),
+            onAddFace: () => this.addFace(),
+            onAddVertex: () => this.addVertex(),
+            onAddBone: () => this.addBone(),
+            onPlayAnimation: () => this.playAnimation(),
+            onImportMesh: file => this.importMesh(file),
+            onDelete: () => this.deleteSelected(),
+            onResetCamera: () => this.resetCamera(),
+            onExport: () => this.exportScene()
+        });
+        this.gizmos = new Gizmos(scene, camera, renderer.canvas, {
+            onPickFace: (mesh, faceIndex) => {
+                this.select(mesh);
+                this.selectFace(faceIndex);
+            },
+            onPickVertex: (mesh, faceIndex) => {
+                this.select(mesh);
+                this.selectFace(faceIndex);
+            }
+        });
+
+        this.selected = null;
+        this.select(scene.meshes[0] || null);
+    }
+
+    update() {
+        this.gizmos.update();
+    }
+
+    select(mesh) {
+        this.selected = mesh;
+        if (mesh) mesh.selectedFace = mesh.selectedFace < 0 ? 0 : mesh.selectedFace;
+        this.ui.setSelected(mesh);
+        this.ui.refreshHierarchy();
+    }
+
+    selectFace(faceIndex) {
+        if (!this.selected) return;
+        this.selected.selectedFace = faceIndex;
+        this.ui.setFace(faceIndex);
+    }
+
+    addFace() {
+        if (!this.selected) return;
+        this.selected.addFace([[0, 0, 0], [1, 0, 0], [0, 1, 0]]);
+        this.selectFace(this.selected.faceCount - 1);
+    }
+
+    addVertex() {
+        if (!this.selected) return;
+        const faceIndex = Math.max(0, this.selected.selectedFace);
+        this.selected.addVertex(faceIndex, [0, 0, 0]);
+        this.ui.setSelected(this.selected);
+    }
+
+    addBone() {
+        if (!this.selected) return;
+        const parent = this.selected.skeleton.bones[this.selected.skeleton.bones.length - 1] || null;
+        this.selected.skeleton.addBone(undefined, parent);
+        this.ui.setSelected(this.selected);
+    }
+
+    playAnimation() {
+        if (!this.selected) return;
+        if (!this.selected.animationClip) {
+            const clip = new AnimationClip('Transform Preview', 2);
+            clip.addTrack('rotation', [0, 1, 2], [[0, 0, 0], [0, Math.PI, 0], [0, Math.PI * 2, 0]]);
+            this.selected.animationClip = clip;
+        }
+        if (this.selected.animationPlayer.playing) this.selected.animationPlayer.stop();
+        else this.selected.animationPlayer.play(this.selected.animationClip);
+    }
+
+    async importMesh(file) {
+        const data = JSON.parse(await file.text());
+        let vertices = data.vertices || [];
+        if (vertices.length && typeof vertices[0] === 'number') {
+            vertices = Array.from({ length: vertices.length / 3 }, (_, index) => vertices.slice(index * 3, index * 3 + 3));
+        }
+        let faces = data.faces || data.indices || [];
+        if (faces.length && typeof faces[0] === 'number') faces = [faces];
+        if (faces.length && faces[0].length === 3 && data.indices) faces = faces;
+        const mesh = Mesh.createFromData(new Material({ color: [0.78, 0.84, 0.92] }), { vertices, faces });
+        mesh.name = file.name.replace(/\.[^.]+$/, '') || 'Imported Mesh';
+        mesh.position = [0, 0.5, 0];
+        this.scene.add(mesh);
+        this.select(mesh);
+    }
+
+    addCube() {
+        const cube = Mesh.createCube(new Material({ color: [0.78, 0.84, 0.92] }));
+        cube.name = `Cube ${this.scene.meshes.length + 1}`;
+        cube.position = [0, 0.5, 0];
+        this.scene.add(cube);
+        this.select(cube);
+    }
+
+    deleteSelected() {
+        if (!this.selected) return;
+        this.scene.remove(this.selected);
+        this.select(this.scene.meshes[this.scene.meshes.length - 1] || null);
+    }
+
+    resetCamera() {
+        this.camera.position = [0, 1.5, 4];
+        this.camera.target = [0, 0.5, 0];
+        this.gizmos.syncFromCamera();
+    }
+
+    exportScene() {
+        const data = {
+            meshes: this.scene.meshes.map(mesh => ({
+                name: mesh.name,
+                position: mesh.position,
+                rotation: mesh.rotation,
+                scale: mesh.scale,
+                color: mesh.material.color,
+                polygons: mesh.polygons,
+                faceColors: mesh.faceColors,
+                faceUvTransforms: mesh.faceUvTransforms,
+                bones: mesh.skeleton.bones.map(bone => ({ name: bone.name, parent: bone.parent?.name || null, position: bone.position, rotation: bone.rotation, scale: bone.scale }))
+            }))
+        };
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'scene.json';
+        link.click();
+        URL.revokeObjectURL(link.href);
+    }
+}
+
+===== FILE: editor/gizmos.js =====
+export class Gizmos {
+    constructor(scene, camera, canvas, callbacks = {}) {
+        this.scene = scene;
+        this.camera = camera;
+        this.canvas = canvas;
+        this.callbacks = callbacks;
+        this.dragging = false;
+        this.lastX = 0;
+        this.lastY = 0;
+        this.moved = false;
+        this.pickMode = 'face';
+        this.activePick = null;
+        this.activeButton = 0;
+        this.distance = Math.hypot(...camera.position);
+        this.yaw = Math.atan2(camera.position[0], camera.position[2]);
+        this.pitch = Math.asin(camera.position[1] / this.distance);
+        this.bindEvents();
+    }
+
+    update() {
+        this.updateCamera();
+    }
+
+    bindEvents() {
+        this.canvas.addEventListener('pointerdown', event => {
+            if (event.button !== 0 && event.button !== 2) return;
+            this.dragging = true;
+            this.activeButton = event.button;
+            this.lastX = event.clientX;
+            this.lastY = event.clientY;
+            this.moved = false;
+            this.activePick = event.button === 0 ? this.pick(event.clientX, event.clientY) : null;
+            this.canvas.setPointerCapture(event.pointerId);
+        });
+        this.canvas.addEventListener('pointermove', event => {
+            if (!this.dragging) return;
+            const deltaX = event.clientX - this.lastX;
+            const deltaY = event.clientY - this.lastY;
+            this.moved = this.moved || Math.abs(deltaX) + Math.abs(deltaY) > 2;
+            if (this.activeButton === 0 && this.activePick && this.pickMode !== 'orbit') this.dragSelection(deltaX, deltaY);
+            else {
+                this.yaw -= deltaX * 0.01;
+                this.pitch = Math.max(-1.35, Math.min(1.35, this.pitch - deltaY * 0.01));
+            }
+            this.lastX = event.clientX;
+            this.lastY = event.clientY;
+        });
+        this.canvas.addEventListener('pointerup', event => {
+            this.dragging = false;
+            this.canvas.releasePointerCapture(event.pointerId);
+            if (!this.moved && this.activeButton === 0) this.pick(event.clientX, event.clientY);
+            this.activePick = null;
+        });
+        this.canvas.addEventListener('wheel', event => {
+            event.preventDefault();
+            this.distance = Math.max(1, Math.min(30, this.distance * Math.exp(event.deltaY * 0.001)));
+        }, { passive: false });
+        this.canvas.addEventListener('contextmenu', event => event.preventDefault());
+    }
+
+    setPickMode(mode) {
+        this.pickMode = mode;
+    }
+
+    dragSelection(deltaX, deltaY) {
+        const pick = this.activePick;
+        const amount = Math.max(1, this.distance) / Math.max(1, this.canvas.height) * 2;
+        if (this.pickMode === 'mesh') {
+            pick.mesh.position[0] += deltaX * amount;
+            pick.mesh.position[1] -= deltaY * amount;
+            return;
+        }
+        const vertices = this.pickMode === 'face'
+            ? pick.mesh.polygons[pick.faceIndex]
+            : [pick.mesh.polygons[pick.faceIndex][pick.vertexIndex]];
+        vertices.forEach(vertex => {
+            vertex[0] += deltaX * amount;
+            vertex[1] -= deltaY * amount;
+        });
+        if (this.pickMode === 'vertex') pick.mesh.weldNearbyVertices(pick.faceIndex, pick.vertexIndex);
+        pick.mesh.rebuildRenderData();
+    }
+
+    pick(clientX, clientY) {
+        const rect = this.canvas.getBoundingClientRect();
+        const x = ((clientX - rect.left) / rect.width) * 2 - 1;
+        const y = 1 - ((clientY - rect.top) / rect.height) * 2;
+        let best = null;
+        for (const mesh of this.scene.meshes) {
+            const model = mesh.getModelMatrix();
+            mesh.polygons.forEach((polygon, faceIndex) => {
+                polygon.forEach((vertex, vertexIndex) => {
+                    const projected = this.project(vertex, model);
+                    const distance = Math.hypot(projected[0] - x, projected[1] - y);
+                    if (distance < (best?.distance ?? 0.08) && distance < 0.08) best = { mesh, faceIndex, vertexIndex, distance, vertex: true };
+                });
+                const center = polygon.reduce((sum, vertex) => sum.map((value, axis) => value + vertex[axis] / polygon.length), [0, 0, 0]);
+                const projected = this.project(center, model);
+                const distance = Math.hypot(projected[0] - x, projected[1] - y);
+                if (distance < (best?.distance ?? 0.18) && distance < 0.18) best = { mesh, faceIndex, distance, vertex: false };
+            });
+        }
+        if (!best && this.pickMode === 'mesh') {
+            let nearestMesh = null;
+            let nearestDistance = Infinity;
+            this.scene.meshes.forEach(mesh => {
+                const points = mesh.polygons.flat();
+                if (!points.length) return;
+                const center = points.reduce((sum, vertex) => sum.map((value, axis) => value + vertex[axis] / points.length), [0, 0, 0]);
+                const projected = this.project(center, mesh.getModelMatrix());
+                const distance = Math.hypot(projected[0] - x, projected[1] - y);
+                if (distance < nearestDistance) {
+                    nearestMesh = { mesh, faceIndex: 0, vertexIndex: 0, distance, vertex: false };
+                    nearestDistance = distance;
+                }
+            });
+            best = nearestMesh;
+        }
+        if (!best) return null;
+        if (best.vertex) this.callbacks.onPickVertex?.(best.mesh, best.faceIndex, best.vertexIndex);
+        else this.callbacks.onPickFace?.(best.mesh, best.faceIndex);
+        return best;
+    }
+
+    project(point, model) {
+        const view = this.camera.getViewMatrix();
+        const projection = this.camera.getProjectionMatrix(this.canvas.width / this.canvas.height);
+        const world = multiplyMatrixVector(model, [...point, 1]);
+        const viewed = multiplyMatrixVector(view, world);
+        const clip = multiplyMatrixVector(projection, viewed);
+        return [clip[0] / clip[3], clip[1] / clip[3]];
+    }
+
+    updateCamera() {
+        const target = this.camera.target;
+        const horizontal = this.distance * Math.cos(this.pitch);
+        this.camera.position = [
+            target[0] + horizontal * Math.sin(this.yaw),
+            target[1] + this.distance * Math.sin(this.pitch),
+            target[2] + horizontal * Math.cos(this.yaw)
+        ];
+    }
+
+    syncFromCamera() {
+        const offset = this.camera.position.map((value, index) => value - this.camera.target[index]);
+        this.distance = Math.hypot(...offset);
+        this.yaw = Math.atan2(offset[0], offset[2]);
+        this.pitch = Math.asin(offset[1] / this.distance);
+    }
+}
+
+function multiplyMatrixVector(matrix, vector) {
+    return [
+        matrix[0] * vector[0] + matrix[4] * vector[1] + matrix[8] * vector[2] + matrix[12] * vector[3],
+        matrix[1] * vector[0] + matrix[5] * vector[1] + matrix[9] * vector[2] + matrix[13] * vector[3],
+        matrix[2] * vector[0] + matrix[6] * vector[1] + matrix[10] * vector[2] + matrix[14] * vector[3],
+        matrix[3] * vector[0] + matrix[7] * vector[1] + matrix[11] * vector[2] + matrix[15] * vector[3]
+    ];
+}
+
+===== FILE: editor/panels/assets.js =====
+export function createAssetsPanel(onImportMesh) {
+    const panel = document.createElement('div');
+    panel.className = 'editor-panel';
+
+    const title = document.createElement('div');
+    title.textContent = 'Assets';
+    title.className = 'panel-title';
+    panel.appendChild(title);
+
+    const info = document.createElement('div');
+    info.className = 'asset-info';
+    info.textContent = 'Textures and model assets';
+    panel.appendChild(info);
+
+    const importLabel = document.createElement('label');
+    importLabel.className = 'editor-button';
+    importLabel.textContent = 'Import mesh JSON';
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,application/json';
+    input.style.display = 'none';
+    input.addEventListener('change', () => input.files[0] && onImportMesh(input.files[0]));
+    importLabel.appendChild(input);
+    panel.appendChild(importLabel);
+
+    return panel;
+}
+
+===== FILE: editor/panels/hierarchy.js =====
+export function createHierarchyPanel(scene, onSelect) {
+    const panel = document.createElement('div');
+    panel.className = 'editor-panel';
+
+    const title = document.createElement('div');
+    title.className = 'panel-title';
+    title.textContent = 'Hierarchy';
+    panel.appendChild(title);
+
+    const list = document.createElement('ul');
+    list.className = 'hierarchy-list';
+    panel.appendChild(list);
+
+    function refresh() {
+        list.innerHTML = '';
+        scene.meshes.forEach((mesh, i) => {
+            const li = document.createElement('li');
+            li.className = 'hierarchy-item';
+            li.textContent = mesh.name || 'Mesh ' + i;
+            li.addEventListener('click', () => onSelect(mesh));
+            list.appendChild(li);
+        });
+    }
+
+    return { element: panel, refresh };
+}
+
+===== FILE: editor/panels/inspector.js =====
+import { loadTextureBlob } from '../../engine/loader.js';
+
+const faceNames = ['Front', 'Back', 'Left', 'Right', 'Top', 'Bottom'];
+
+export function createInspectorPanel(gl, onSelectFace) {
+    const panel = document.createElement('div');
+    panel.className = 'editor-panel';
+
+    const title = document.createElement('div');
+    title.className = 'panel-title';
+    title.textContent = 'Inspector';
+    panel.appendChild(title);
+
+    const info = document.createElement('div');
+    panel.appendChild(info);
+    let currentMesh = null;
+    let currentFace = 0;
+
+    function addField(label, value, onInput, step = '0.1') {
+        const group = document.createElement('div');
+        group.className = 'field-group';
+        const labelElement = document.createElement('label');
+        labelElement.className = 'field-label';
+        labelElement.textContent = label;
+        group.appendChild(labelElement);
+        const input = document.createElement('input');
+        input.className = 'editor-input';
+        input.type = 'number';
+        input.step = step;
+        input.value = value;
+        input.addEventListener('input', () => onInput(Number(input.value) || 0));
+        group.appendChild(input);
+        return group;
+    }
+
+    function addVectorField(label, values, onInput, degrees = false) {
+        const group = document.createElement('div');
+        group.className = 'field-group';
+        const labelElement = document.createElement('label');
+        labelElement.className = 'field-label';
+        labelElement.textContent = label;
+        group.appendChild(labelElement);
+        const fields = document.createElement('div');
+        fields.className = 'vector-fields';
+        values.forEach((value, index) => {
+            const input = document.createElement('input');
+            input.className = 'editor-input';
+            input.type = 'number';
+            input.step = '0.1';
+            input.value = degrees ? (value * 180 / Math.PI).toFixed(1) : value;
+            input.addEventListener('input', () => {
+                const nextValue = Number(input.value) || 0;
+                onInput(index, degrees ? nextValue * Math.PI / 180 : nextValue);
+            });
+            fields.appendChild(input);
+        });
+        group.appendChild(fields);
+        info.appendChild(group);
+    }
+
+    function renderFaceEditor() {
+        info.innerHTML = '';
+        if (!currentMesh) {
+            const empty = document.createElement('div');
+            empty.className = 'inspector-empty';
+            empty.textContent = 'Select an object from the hierarchy.';
+            info.appendChild(empty);
+            return;
+        }
+
+        const rigInfo = document.createElement('div');
+        rigInfo.className = 'inspector-empty';
+        rigInfo.textContent = `Rig: ${currentMesh.skeleton.bones.length} bone${currentMesh.skeleton.bones.length === 1 ? '' : 's'}${currentMesh.animationPlayer.playing ? ' - playing' : ''}`;
+        info.appendChild(rigInfo);
+
+        const faceTitle = document.createElement('div');
+        faceTitle.className = 'face-title';
+        faceTitle.textContent = `Editing ${faceNames[currentFace] || `Face ${currentFace + 1}`} face`;
+        info.appendChild(faceTitle);
+        const faceButtons = document.createElement('div');
+        faceButtons.className = 'face-buttons';
+        currentMesh.polygons.forEach((polygon, index) => {
+            const button = document.createElement('button');
+            button.className = 'face-button' + (index === currentFace ? ' selected' : '');
+            button.type = 'button';
+            button.textContent = faceNames[index] || `Face ${index + 1}`;
+            button.addEventListener('click', () => {
+                currentFace = index;
+                onSelectFace(index);
+                renderFaceEditor();
+            });
+            faceButtons.appendChild(button);
+        });
+        info.appendChild(faceButtons);
+
+        const polygon = currentMesh.polygons[currentFace] || [];
+        polygon.forEach((vertexValue, vertexIndex) => {
+            const vertex = document.createElement('div');
+            vertex.className = 'field-group';
+            const label = document.createElement('div');
+            label.className = 'field-label';
+            label.textContent = `Vertex ${vertexIndex + 1}`;
+            vertex.appendChild(label);
+            const fields = document.createElement('div');
+            fields.className = 'vector-fields';
+            for (let axis = 0; axis < 3; axis++) {
+                const value = vertexValue[axis];
+                const input = document.createElement('input');
+                input.className = 'editor-input';
+                input.type = 'number';
+                input.step = '0.05';
+                input.value = value;
+                input.addEventListener('input', () => {
+                    const vertex = [...currentMesh.polygons[currentFace][vertexIndex]];
+                    vertex[axis] = Number(input.value) || 0;
+                    currentMesh.setFaceVertex(currentFace, vertexIndex, vertex);
+                });
+                fields.appendChild(input);
+            }
+            vertex.appendChild(fields);
+            info.appendChild(vertex);
+        });
+
+        const name = document.createElement('input');
+        name.className = 'editor-input field-group';
+        name.value = currentMesh.name;
+        name.addEventListener('input', () => { currentMesh.name = name.value || 'Mesh'; });
+        info.appendChild(name);
+        addVectorField('Position', currentMesh.position, (index, value) => { currentMesh.position[index] = value; });
+        addVectorField('Rotation', currentMesh.rotation, (index, value) => { currentMesh.rotation[index] = value; }, true);
+        addVectorField('Scale', currentMesh.scale, (index, value) => { currentMesh.scale[index] = value; });
+
+        const colorGroup = document.createElement('div');
+        colorGroup.className = 'field-group';
+        const colorLabel = document.createElement('label');
+        colorLabel.className = 'field-label';
+        colorLabel.textContent = 'Material color';
+        colorGroup.appendChild(colorLabel);
+        const colorRow = document.createElement('div');
+        colorRow.className = 'color-row';
+        const color = document.createElement('input');
+        color.className = 'color-input';
+        color.type = 'color';
+        color.value = '#' + currentMesh.faceColors[currentFace].map(value => Math.round(value * 255).toString(16).padStart(2, '0')).join('');
+        color.addEventListener('input', () => {
+            currentMesh.faceColors[currentFace] = [1, 3, 5].map(offset => parseInt(color.value.slice(offset, offset + 2), 16) / 255);
+        });
+        colorRow.appendChild(color);
+        colorGroup.appendChild(colorRow);
+        info.appendChild(colorGroup);
+
+        const textureGroup = document.createElement('div');
+        textureGroup.className = 'field-group';
+        const textureLabel = document.createElement('label');
+        textureLabel.className = 'field-label';
+        textureLabel.textContent = 'Image for this face (WebP or image)';
+        textureGroup.appendChild(textureLabel);
+        const file = document.createElement('input');
+        file.className = 'editor-input';
+        file.type = 'file';
+        file.accept = 'image/webp,image/*';
+        file.addEventListener('change', async () => {
+            if (!file.files[0]) return;
+            currentMesh.faceTextures[currentFace] = await loadTextureBlob(file.files[0], gl);
+        });
+        textureGroup.appendChild(file);
+        info.appendChild(textureGroup);
+
+        const transform = currentMesh.faceUvTransforms[currentFace];
+        const uvControls = document.createElement('div');
+        uvControls.className = 'field-group';
+        const uvLabel = document.createElement('div');
+        uvLabel.className = 'field-label';
+        uvLabel.textContent = 'Image placement: scale X/Y, offset X/Y, rotation';
+        uvControls.appendChild(uvLabel);
+        [['Scale X', transform.scale, 0], ['Scale Y', transform.scale, 1], ['Offset X', transform.offset, 0], ['Offset Y', transform.offset, 1]].forEach(([label, target, index]) => {
+            uvControls.appendChild(addField(label, target[index], value => { target[index] = value; }));
+        });
+        uvControls.appendChild(addField('Rotation (degrees)', transform.rotation * 180 / Math.PI, value => { transform.rotation = value * Math.PI / 180; }));
+        info.appendChild(uvControls);
+    }
+
+    function setMesh(mesh) {
+        currentMesh = mesh;
+        currentFace = mesh?.selectedFace >= 0 ? mesh.selectedFace : 0;
+        renderFaceEditor();
+    }
+
+    return { element: panel, setMesh, setFace: faceIndex => { currentFace = faceIndex; renderFaceEditor(); } };
+}
+
+===== FILE: editor/ui.js =====
+import { createHierarchyPanel } from './panels/hierarchy.js';
+import { createInspectorPanel } from './panels/inspector.js';
+import { createAssetsPanel } from './panels/assets.js';
+
+export function createUI(root, options) {
+    const { scene, onSelect, onSelectFace, onSetPickMode, onAddCube, onAddFace, onAddVertex, onAddBone, onPlayAnimation, onImportMesh, onDelete, onResetCamera, onExport } = options;
+    root.style.pointerEvents = 'none';
+    root.innerHTML = '';
+
+    const style = document.createElement('style');
+    style.textContent = `
+        #ui-root { color: #e8edf5; font: 13px/1.4 system-ui, sans-serif; }
+        .editor-shell { display: flex; flex-direction: column; gap: 8px; padding: 12px; width: min(100% - 24px, 920px); box-sizing: border-box; pointer-events: none; transform-origin: top left; }
+        .editor-toolbar { background: rgba(16, 22, 32, 0.92); border: 1px solid rgba(164, 183, 211, 0.2); box-shadow: 0 10px 30px rgba(0,0,0,.25); pointer-events: auto; }
+        .editor-toolbar { display: flex; align-items: center; gap: 6px; padding: 7px; }
+        .editor-title { margin: 0 12px 0 4px; font-size: 14px; letter-spacing: .04em; text-transform: uppercase; color: #9ed8ff; }
+        .editor-button { border: 1px solid #3b526d; background: #1b2a3b; color: #e8edf5; padding: 6px 10px; cursor: pointer; border-radius: 3px; }
+        .editor-button:hover { background: #29425c; }
+        .editor-panels { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+        .editor-panel { min-width: 0; padding: 10px; max-height: calc(100vh - 105px); overflow: auto; scrollbar-width: thin; scrollbar-color: #526c88 #101722; pointer-events: none; background: rgba(16, 22, 32, 0.92); border: 1px solid rgba(164, 183, 211, 0.2); box-shadow: 0 10px 30px rgba(0,0,0,.25); }
+        .panel-title { margin: 0 0 8px; color: #9ed8ff; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; }
+        .hierarchy-list { list-style: none; padding: 0; margin: 0; }
+        .hierarchy-item { padding: 6px 8px; cursor: pointer; border-radius: 3px; }
+        .hierarchy-item:hover, .hierarchy-item.selected { background: #284a68; }
+        .inspector-empty, .asset-info { color: #9aa9ba; }
+        .field-group { margin: 0 0 10px; }
+        .field-label { display: block; margin-bottom: 4px; color: #9aa9ba; font-size: 11px; text-transform: uppercase; }
+        .vector-fields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+        .editor-input { box-sizing: border-box; width: 100%; min-width: 0; border: 1px solid #3b526d; background: #101722; color: #e8edf5; padding: 5px; pointer-events: auto; }
+        .editor-panel button, .editor-panel label, .editor-panel input, .hierarchy-item { pointer-events: auto; }
+        .editor-button.selected { background: #284a68; border-color: #9ed8ff; }
+        .face-title { margin: 0 0 8px; color: #ffd071; font-weight: 700; }
+        .face-buttons { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 12px; }
+        .face-button { border: 1px solid #3b526d; background: #101722; color: #c8d4e2; padding: 5px 3px; cursor: pointer; font-size: 11px; }
+        .face-button:hover, .face-button.selected { background: #6a4e1c; border-color: #ffd071; color: #fff; }
+        .color-row { display: flex; align-items: center; gap: 8px; }
+        .color-input { width: 42px; height: 28px; border: 0; padding: 0; background: none; }
+        @media (max-width: 700px) { .editor-panels { grid-template-columns: 1fr; } .editor-toolbar { flex-wrap: wrap; } .editor-title { width: 100%; } }
+    `;
+    root.appendChild(style);
+    window.addEventListener('keydown', event => {
+        if (event.key.toLowerCase() !== 'f' || ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
+        root.style.display = root.style.display === 'none' ? '' : 'none';
+    });
+
+    const container = document.createElement('div');
+    container.className = 'editor-shell';
+    root.appendChild(container);
+
+    const toolbar = document.createElement('div');
+    toolbar.className = 'editor-toolbar';
+    const title = document.createElement('h1');
+    title.className = 'editor-title';
+    title.textContent = 'Lightweight 3D';
+    toolbar.appendChild(title);
+    const button = (label, handler) => {
+        const element = document.createElement('button');
+        element.className = 'editor-button';
+        element.type = 'button';
+        element.textContent = label;
+        element.addEventListener('click', handler);
+        toolbar.appendChild(element);
+    };
+    button('+ Cube', onAddCube);
+    button('+ Face', onAddFace);
+    button('+ Vertex', onAddVertex);
+    button('+ Bone', onAddBone);
+    button('Play', onPlayAnimation);
+    button('Delete', onDelete);
+    button('Reset View', onResetCamera);
+    button('Export', onExport);
+    button('HUD -', () => setHudScale(Math.max(0.7, Number(container.dataset.hudScale || 1) - 0.1)));
+    button('HUD +', () => setHudScale(Math.min(1.4, Number(container.dataset.hudScale || 1) + 0.1)));
+    ['face', 'vertex', 'mesh', 'orbit'].forEach(mode => {
+        const modeButton = document.createElement('button');
+        modeButton.className = 'editor-button' + (mode === 'face' ? ' selected' : '');
+        modeButton.type = 'button';
+        modeButton.textContent = mode[0].toUpperCase() + mode.slice(1);
+        modeButton.dataset.pickMode = mode;
+        modeButton.addEventListener('click', () => {
+            onSetPickMode(mode);
+            toolbar.querySelectorAll('[data-pick-mode]').forEach(button => button.classList.toggle('selected', button.dataset.pickMode === mode));
+        });
+        toolbar.appendChild(modeButton);
+    });
+    container.appendChild(toolbar);
+
+    const panels = document.createElement('div');
+    panels.className = 'editor-panels';
+    container.appendChild(panels);
+
+    const hierarchy = createHierarchyPanel(scene, onSelect);
+    const inspector = createInspectorPanel(options.gl, onSelectFace);
+    const assets = createAssetsPanel(onImportMesh);
+
+    panels.appendChild(hierarchy.element);
+    panels.appendChild(inspector.element);
+    panels.appendChild(assets);
+
+    return {
+        setSelected: mesh => inspector.setMesh(mesh),
+        setFace: faceIndex => inspector.setFace(faceIndex),
+        refreshHierarchy: hierarchy.refresh,
+        setPickMode: mode => onSetPickMode(mode)
+    };
+
+    function setHudScale(scale) {
+        container.dataset.hudScale = scale;
+        container.style.transform = `scale(${scale})`;
+    }
+}
+
+===== FILE: engine/animation.js =====
+export class AnimationClip {
+    constructor(name = 'Animation', duration = 1) {
+        this.name = name;
+        this.duration = duration;
+        this.tracks = [];
+    }
+
+    addTrack(property, times, values) {
+        this.tracks.push({ property, times, values });
+    }
+
+    apply(target, time) {
+        const sampleTime = ((time % this.duration) + this.duration) % this.duration;
+        this.tracks.forEach(track => {
+            if (!track.times.length) return;
+            let next = track.times.findIndex(value => value >= sampleTime);
+            if (next < 0) next = track.times.length - 1;
+            const previous = Math.max(0, next - 1);
+            const start = track.times[previous];
+            const end = track.times[next];
+            const amount = end === start ? 0 : (sampleTime - start) / (end - start);
+            const from = track.values[previous];
+            const to = track.values[next];
+            target[track.property] = from.map((value, index) => value + (to[index] - value) * amount);
+        });
+    }
+}
+
+export class AnimationPlayer {
+    constructor(target) {
+        this.target = target;
+        this.clip = null;
+        this.time = 0;
+        this.playing = false;
+    }
+
+    play(clip) {
+        this.clip = clip || this.clip;
+        this.time = 0;
+        this.playing = !!this.clip;
+    }
+
+    stop() {
+        this.playing = false;
+    }
+
+    update(deltaTime) {
+        if (!this.playing || !this.clip) return;
+        this.time += deltaTime;
+        this.clip.apply(this.target, this.time);
+    }
+}
+
+===== FILE: engine/camera.js =====
+import { mat4 } from './mat4.js';
+
+export class Camera {
+    constructor() {
+        this.position = [0, 0, 5];
+        this.target = [0, 0, 0];
+        this.up = [0, 1, 0];
+        this.fov = 60 * Math.PI / 180;
+        this.near = 0.1;
+        this.far = 100;
+    }
+
+    getViewMatrix() {
+        return mat4.lookAt(this.position, this.target, this.up);
+    }
+
+    getProjectionMatrix(aspect) {
+        return mat4.perspective(this.fov, aspect, this.near, this.far);
+    }
+}
+
+===== FILE: engine/loader.js =====
+export async function loadTexture(url, gl) {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error('Failed to fetch texture: ' + url);
+    return loadTextureBlob(await resp.blob(), gl);
+}
+
+export async function loadTextureBlob(blob, gl) {
+    const img = await createImageBitmap(blob);
+
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA,
+                  gl.RGBA, gl.UNSIGNED_BYTE, img);
+
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    return tex;
+}
+
+export async function loadShaderSource(url) {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error('Failed to fetch shader: ' + url);
+    return await resp.text();
+}
+
+===== FILE: engine/mat4.js =====
+export const mat4 = {
+    lookAt(eye, center, up) {
+        const [ex, ey, ez] = eye;
+        const [cx, cy, cz] = center;
+        const [ux, uy, uz] = up;
+
+        let zx = ex - cx, zy = ey - cy, zz = ez - cz;
+        const zlen = Math.hypot(zx, zy, zz);
+        zx /= zlen; zy /= zlen; zz /= zlen;
+
+        let xx = uy * zz - uz * zy;
+        let xy = uz * zx - ux * zz;
+        let xz = ux * zy - uy * zx;
+        const xlen = Math.hypot(xx, xy, xz);
+        xx /= xlen; xy /= xlen; xz /= xlen;
+
+        const yx = zy * xz - zz * xy;
+        const yy = zz * xx - zx * xz;
+        const yz = zx * xy - zy * xx;
+
+        const out = new Float32Array(16);
+        out[0] = xx; out[1] = yx; out[2] = zx; out[3] = 0;
+        out[4] = xy; out[5] = yy; out[6] = zy; out[7] = 0;
+        out[8] = xz; out[9] = yz; out[10] = zz; out[11] = 0;
+        out[12] = -(xx * ex + xy * ey + xz * ez);
+        out[13] = -(yx * ex + yy * ey + yz * ez);
+        out[14] = -(zx * ex + zy * ey + zz * ez);
+        out[15] = 1;
+        return out;
+    },
+
+    perspective(fov, aspect, near, far) {
+        const f = 1.0 / Math.tan(fov / 2);
+        const nf = 1 / (near - far);
+        const out = new Float32Array(16);
+        out[0] = f / aspect;
+        out[1] = 0;
+        out[2] = 0;
+        out[3] = 0;
+
+        out[4] = 0;
+        out[5] = f;
+        out[6] = 0;
+        out[7] = 0;
+
+        out[8] = 0;
+        out[9] = 0;
+        out[10] = (far + near) * nf;
+        out[11] = -1;
+
+        out[12] = 0;
+        out[13] = 0;
+        out[14] = (2 * far * near) * nf;
+        out[15] = 0;
+        return out;
+    }
+};
+
+===== FILE: engine/material.js =====
+export class Material {
+    constructor({ color = [1,1,1], useTexture = false, texture = null } = {}) {
+        this.color = color;
+        this.useTexture = useTexture;
+        this.texture = texture;
+    }
+
+    bind(gl, program) {
+        const uColor = gl.getUniformLocation(program, 'uColor');
+        const uUseTexture = gl.getUniformLocation(program, 'uUseTexture');
+        const uTexture = gl.getUniformLocation(program, 'uTexture');
+
+        gl.uniform3fv(uColor, new Float32Array(this.color));
+        gl.uniform1i(uUseTexture, this.useTexture ? 1 : 0);
+
+        if (this.useTexture && this.texture) {
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, this.texture);
+            gl.uniform1i(uTexture, 0);
+        }
+    }
+}
+
+===== FILE: engine/mesh.js =====
+import { mat4 } from './mat4.js';
+import { Skeleton } from './skeleton.js';
+import { AnimationPlayer } from './animation.js';
+
+export class Mesh {
+    constructor(material) {
+        this.material = material;
+        this.name = 'Mesh';
+        this.position = [0, 0, 0];
+        this.rotation = [0, 0, 0];
+        this.scale = [1, 1, 1];
+
+        this.vertices = null;
+        this.colors = null;
+        this.uvs = null;
+        this.indices = null;
+
+        this.vao = null;
+        this.vaoExtension = null;
+        this.positionBuffer = null;
+        this.colorBuffer = null;
+        this.uvBuffer = null;
+        this.faceColors = [];
+        this.faceTextures = [];
+        this.faceUvTransforms = [];
+        this.faceCount = 0;
+        this.selectedFace = -1;
+        this.polygons = [];
+        this.faceRanges = [];
+        this.skeleton = new Skeleton();
+        this.animationPlayer = new AnimationPlayer(this);
+    }
+
+    static createCube(material) {
+        const mesh = new Mesh(material);
+
+        mesh.polygons = [
+            [[-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]],
+            [[0.5,-0.5,-0.5],[-0.5,-0.5,-0.5],[-0.5,0.5,-0.5],[0.5,0.5,-0.5]],
+            [[-0.5,-0.5,-0.5],[-0.5,-0.5,0.5],[-0.5,0.5,0.5],[-0.5,0.5,-0.5]],
+            [[0.5,-0.5,0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[0.5,0.5,0.5]],
+            [[-0.5,0.5,0.5],[0.5,0.5,0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5]],
+            [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,-0.5,0.5],[-0.5,-0.5,0.5]]
+        ];
+        mesh.rebuildRenderData();
+
+        return mesh;
+    }
+
+    static createFromData(material, data) {
+        const mesh = new Mesh(material);
+        const vertices = data.vertices || [];
+        const faces = data.faces || [];
+        mesh.polygons = faces.map(face => face.map(index => [...vertices[index]]));
+        mesh.rebuildRenderData();
+        return mesh;
+    }
+
+    addVertex(faceIndex, position = [0, 0, 0]) {
+        if (!this.polygons[faceIndex]) this.polygons.push([]);
+        this.polygons[faceIndex].push([...position]);
+        this.rebuildRenderData();
+    }
+
+    addFace(vertices = [[0, 0, 0], [1, 0, 0], [0, 1, 0]]) {
+        this.polygons.push(vertices.map(vertex => [...vertex]));
+        this.rebuildRenderData();
+        this.selectedFace = this.polygons.length - 1;
+    }
+
+    setFaceVertex(faceIndex, vertexIndex, position) {
+        if (!this.polygons[faceIndex]?.[vertexIndex]) return;
+        const previous = this.polygons[faceIndex][vertexIndex];
+        this.polygons.forEach(polygon => polygon.forEach((vertex, otherFace) => {
+            if (vertex === previous || Math.hypot(vertex[0] - previous[0], vertex[1] - previous[1], vertex[2] - previous[2]) < 0.0001) {
+                polygon[otherFace] = [...position];
+            }
+        }));
+        this.weldNearbyVertices(faceIndex, vertexIndex);
+        this.rebuildRenderData();
+    }
+
+    weldNearbyVertices(faceIndex, vertexIndex, threshold = 0.08) {
+        const source = this.polygons[faceIndex]?.[vertexIndex];
+        if (!source) return;
+        let nearest = null;
+        let nearestDistance = threshold;
+        this.polygons.forEach((polygon, otherFace) => polygon.forEach((vertex, otherVertex) => {
+            if (otherFace === faceIndex && otherVertex === vertexIndex) return;
+            const distance = Math.hypot(vertex[0] - source[0], vertex[1] - source[1], vertex[2] - source[2]);
+            if (distance < nearestDistance) {
+                nearest = vertex;
+                nearestDistance = distance;
+            }
+        }));
+        if (nearest) {
+            this.polygons.forEach(polygon => polygon.forEach(vertex => {
+                if (Math.hypot(vertex[0] - source[0], vertex[1] - source[1], vertex[2] - source[2]) < threshold) {
+                    vertex.splice(0, 3, ...nearest);
+                }
+            }));
+        }
+    }
+
+    rebuildRenderData() {
+        const vertices = [];
+        const colors = [];
+        const uvs = [];
+        const indices = [];
+        this.faceRanges = [];
+        const faceUVs = [[0, 0], [1, 0], [1, 1], [0, 1]];
+        this.polygons.forEach((polygon, faceIndex) => {
+            const vertexStart = vertices.length / 3;
+            polygon.forEach((vertex, vertexIndex) => {
+                vertices.push(...vertex);
+                colors.push(1, 1, 1);
+                uvs.push(...faceUVs[vertexIndex % faceUVs.length]);
+            });
+            for (let vertexIndex = 1; vertexIndex < polygon.length - 1; vertexIndex++) {
+                indices.push(vertexStart, vertexStart + vertexIndex, vertexStart + vertexIndex + 1);
+            }
+            this.faceRanges.push({ offset: indices.length - Math.max(0, polygon.length - 2) * 3, count: Math.max(0, polygon.length - 2) * 3 });
+        });
+        this.vertices = new Float32Array(vertices);
+        this.colors = new Float32Array(colors);
+        this.uvs = new Float32Array(uvs);
+        this.indices = new Uint16Array(indices);
+        this.faceCount = this.polygons.length;
+        while (this.faceColors.length < this.faceCount) this.faceColors.push([1, 1, 1]);
+        while (this.faceTextures.length < this.faceCount) this.faceTextures.push(null);
+        while (this.faceUvTransforms.length < this.faceCount) this.faceUvTransforms.push({ scale: [1, 1], offset: [0, 0], rotation: 0 });
+        if (this.vao) this.invalidateBuffers();
+    }
+
+    invalidateBuffers() {
+        this.vao = null;
+        this.positionBuffer = null;
+        this.colorBuffer = null;
+        this.uvBuffer = null;
+    }
+
+    initBuffers(gl, program) {
+        if (this.vao) return;
+        this.vaoExtension = gl.createVertexArray ? null : gl.getExtension('OES_vertex_array_object');
+        if (!gl.createVertexArray && !this.vaoExtension) {
+            throw new Error('Vertex array objects are not supported');
+        }
+
+        this.vao = gl.createVertexArray
+            ? gl.createVertexArray()
+            : this.vaoExtension.createVertexArrayOES();
+        if (gl.createVertexArray) {
+            gl.bindVertexArray(this.vao);
+        } else {
+            this.vaoExtension.bindVertexArrayOES(this.vao);
+        }
+
+        const aPos = gl.getAttribLocation(program, 'aPosition');
+        const aColor = gl.getAttribLocation(program, 'aColor');
+        const aUV = gl.getAttribLocation(program, 'aUV');
+
+        const vbo = gl.createBuffer();
+        this.positionBuffer = vbo;
+        gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+        gl.bufferData(gl.ARRAY_BUFFER, this.vertices, gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(aPos);
+        gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 0, 0);
+
+        const cbo = gl.createBuffer();
+        this.colorBuffer = cbo;
+        gl.bindBuffer(gl.ARRAY_BUFFER, cbo);
+        gl.bufferData(gl.ARRAY_BUFFER, this.colors, gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(aColor);
+        gl.vertexAttribPointer(aColor, 3, gl.FLOAT, false, 0, 0);
+
+        const ubo = gl.createBuffer();
+        this.uvBuffer = ubo;
+        gl.bindBuffer(gl.ARRAY_BUFFER, ubo);
+        gl.bufferData(gl.ARRAY_BUFFER, this.uvs, gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(aUV);
+        gl.vertexAttribPointer(aUV, 2, gl.FLOAT, false, 0, 0);
+
+        const ibo = gl.createBuffer();
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, this.indices, gl.STATIC_DRAW);
+
+        if (gl.createVertexArray) {
+            gl.bindVertexArray(null);
+        } else {
+            this.vaoExtension.bindVertexArrayOES(null);
+        }
+    }
+
+    getModelMatrix() {
+        const out = new Float32Array(16);
+        const [x, y, z] = this.rotation;
+        const [sx, sy, sz] = this.scale;
+        const cx = Math.cos(x), sxr = Math.sin(x);
+        const cy = Math.cos(y), syr = Math.sin(y);
+        const cz = Math.cos(z), szr = Math.sin(z);
+        const r00 = cy * cz;
+        const r01 = cy * szr;
+        const r02 = -syr;
+        const r10 = sxr * syr * cz - cx * szr;
+        const r11 = sxr * syr * szr + cx * cz;
+        const r12 = sxr * cy;
+        const r20 = cx * syr * cz + sxr * szr;
+        const r21 = cx * syr * szr - sxr * cz;
+        const r22 = cx * cy;
+        out[0] = r00 * sx; out[1] = r10 * sx; out[2] = r20 * sx; out[3] = 0;
+        out[4] = r01 * sy; out[5] = r11 * sy; out[6] = r21 * sy; out[7] = 0;
+        out[8] = r02 * sz; out[9] = r12 * sz; out[10] = r22 * sz; out[11] = 0;
+        out[12] = this.position[0]; out[13] = this.position[1]; out[14] = this.position[2]; out[15] = 1;
+        return out;
+    }
+
+    draw(gl, program) {
+        this.initBuffers(gl, program);
+
+        if (gl.createVertexArray) {
+            gl.bindVertexArray(this.vao);
+        } else {
+            this.vaoExtension.bindVertexArrayOES(this.vao);
+        }
+
+        const uModel = gl.getUniformLocation(program, 'uModel');
+        const uColor = gl.getUniformLocation(program, 'uColor');
+        const uUseTexture = gl.getUniformLocation(program, 'uUseTexture');
+        const uTexture = gl.getUniformLocation(program, 'uTexture');
+        const uUVTransform = gl.getUniformLocation(program, 'uUVTransform');
+        const uUVRotation = gl.getUniformLocation(program, 'uUVRotation');
+        const uFaceSelected = gl.getUniformLocation(program, 'uFaceSelected');
+        gl.uniformMatrix4fv(uModel, false, this.getModelMatrix());
+        for (let faceIndex = 0; faceIndex < this.faceCount; faceIndex++) {
+            const color = this.faceColors[faceIndex] || this.material.color;
+            const texture = this.faceTextures[faceIndex];
+            const transform = this.faceUvTransforms[faceIndex];
+            gl.uniform3fv(uColor, new Float32Array(color));
+            gl.uniform1i(uUseTexture, texture ? 1 : 0);
+            gl.uniform1f(uFaceSelected, this.selectedFace === faceIndex ? 1 : 0);
+            gl.uniform4f(uUVTransform, transform.scale[0], transform.scale[1], transform.offset[0], transform.offset[1]);
+            gl.uniform1f(uUVRotation, transform.rotation);
+            if (texture) {
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, texture);
+                gl.uniform1i(uTexture, 0);
+            }
+            const range = this.faceRanges[faceIndex];
+            gl.drawElements(gl.TRIANGLES, range.count, gl.UNSIGNED_SHORT, range.offset * 2);
+        }
+
+        if (gl.createVertexArray) {
+            gl.bindVertexArray(null);
+        } else {
+            this.vaoExtension.bindVertexArrayOES(null);
+        }
+    }
+
+    updateGeometry(gl) {
+        if (!this.vao) return;
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, this.vertices, gl.STATIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, this.colors, gl.STATIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.uvBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, this.uvs, gl.STATIC_DRAW);
+    }
+}
+
+===== FILE: engine/render.js =====
+import { loadShaderSource } from './loader.js';
+
+export class Renderer {
+    constructor(canvas) {
+        this.canvas = canvas;
+        this.gl = canvas.getContext('webgl');
+        if (!this.gl) throw new Error('WebGL not supported');
+
+        this.resize();
+        window.addEventListener('resize', () => this.resize());
+
+        this.program = null;
+        this.ready = this.initProgram();
+    }
+
+    async initProgram() {
+        const gl = this.gl;
+        const vertSrc = await loadShaderSource('./engine/shaders/flat.vert');
+        const fragSrc = await loadShaderSource('./engine/shaders/flat.frag');
+
+        const vs = this.createShader(gl.VERTEX_SHADER, vertSrc);
+        const fs = this.createShader(gl.FRAGMENT_SHADER, fragSrc);
+
+        const prog = gl.createProgram();
+        gl.attachShader(prog, vs);
+        gl.attachShader(prog, fs);
+        gl.linkProgram(prog);
+
+        if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+            throw new Error(gl.getProgramInfoLog(prog));
+        }
+
+        this.program = prog;
+        gl.useProgram(this.program);
+    }
+
+    createShader(type, src) {
+        const gl = this.gl;
+        const shader = gl.createShader(type);
+        gl.shaderSource(shader, src);
+        gl.compileShader(shader);
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            throw new Error(gl.getShaderInfoLog(shader));
+        }
+        return shader;
+    }
+
+    resize() {
+        this.canvas.width = window.innerWidth;
+        this.canvas.height = window.innerHeight;
+        this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    }
+
+    render(scene, camera) {
+        const gl = this.gl;
+        if (!this.program) return;
+
+        gl.clearColor(0.1, 0.1, 0.15, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        gl.enable(gl.DEPTH_TEST);
+
+        gl.useProgram(this.program);
+
+        const uView = gl.getUniformLocation(this.program, 'uView');
+        const uProj = gl.getUniformLocation(this.program, 'uProj');
+
+        const view = camera.getViewMatrix();
+        const proj = camera.getProjectionMatrix(this.canvas.width / this.canvas.height);
+
+        gl.uniformMatrix4fv(uView, false, view);
+        gl.uniformMatrix4fv(uProj, false, proj);
+
+        for (const mesh of scene.meshes) {
+            mesh.draw(gl, this.program);
+        }
+    }
+}
+
+===== FILE: engine/scene.js =====
+export class Scene {
+    constructor() {
+        this.meshes = [];
+    }
+
+    add(mesh) {
+        this.meshes.push(mesh);
+    }
+
+    remove(mesh) {
+        this.meshes = this.meshes.filter(m => m !== mesh);
+    }
+
+    update(dt) {
+        this.meshes.forEach(mesh => mesh.animationPlayer?.update(dt));
+    }
+}
+
+===== FILE: engine/shaders/flat.frag =====
+precision mediump float;
+
+varying vec3 vColor;
+varying vec2 vUV;
+
+uniform bool uUseTexture;
+uniform sampler2D uTexture;
+uniform vec3 uColor;
+uniform float uFaceSelected;
+
+void main() {
+    vec3 color = vColor * uColor;
+    if (uUseTexture && vUV.x >= 0.0 && vUV.x <= 1.0 && vUV.y >= 0.0 && vUV.y <= 1.0) {
+        color *= texture2D(uTexture, vUV).rgb;
+    }
+    color = mix(color, vec3(1.0, 0.72, 0.12), uFaceSelected * 0.35);
+    gl_FragColor = vec4(color, 1.0);
+}
+
+===== FILE: engine/shaders/flat.vert =====
+attribute vec3 aPosition;
+attribute vec3 aNormal;
+attribute vec2 aUV;
+attribute vec3 aColor;
+
+uniform mat4 uModel;
+uniform mat4 uView;
+uniform mat4 uProj;
+uniform vec4 uUVTransform;
+uniform float uUVRotation;
+
+varying vec3 vColor;
+varying vec2 vUV;
+
+void main() {
+    vColor = aColor;
+    vec2 uv = aUV - vec2(0.5);
+    float c = cos(uUVRotation);
+    float s = sin(uUVRotation);
+    uv = mat2(c, -s, s, c) * uv;
+    vUV = uv * uUVTransform.xy + vec2(0.5) + uUVTransform.zw;
+    gl_Position = uProj * uView * uModel * vec4(aPosition, 1.0);
+}
+
+===== FILE: engine/skeleton.js =====
+export class Bone {
+    constructor(name, parent = null) {
+        this.name = name;
+        this.parent = parent;
+        this.children = [];
+        this.position = [0, 0, 0];
+        this.rotation = [0, 0, 0];
+        this.scale = [1, 1, 1];
+        if (parent) parent.children.push(this);
+    }
+}
+
+export class Skeleton {
+    constructor() {
+        this.bones = [];
+    }
+
+    addBone(name = `Bone ${this.bones.length + 1}`, parent = null) {
+        const bone = new Bone(name, parent);
+        this.bones.push(bone);
+        return bone;
+    }
+
+    find(name) {
+        return this.bones.find(bone => bone.name === name) || null;
+    }
+}
+
+===== FILE: index.html =====
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Flat Shaded 3D Engine</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        #viewport { width: 100vw; height: 100vh; display: block; }
+        #ui-root { position: absolute; top: 0; left: 0; right: 0; pointer-events: none; }
+    </style>
+</head>
+<body>
+    <canvas id="viewport"></canvas>
+    <div id="ui-root"></div>
+    <script type="module" src="./main.js"></script>
+</body>
+</html>
+
+===== FILE: main.js =====
+import { Renderer } from './engine/render.js';
+import { Scene } from './engine/scene.js';
+import { Camera } from './engine/camera.js';
+import { Mesh } from './engine/mesh.js';
+import { Material } from './engine/material.js';
+import { loadTexture } from './engine/loader.js';
+import { Editor } from './editor/editor.js';
+
+const canvas = document.getElementById('viewport');
+const renderer = new Renderer(canvas);
+const scene = new Scene();
+const camera = new Camera();
+camera.position = [0, 1.5, 4];
+
+let editor;
+let lastTime = performance.now();
+
+async function init() {
+    await renderer.ready;
+
+    let tex = null;
+    try {
+        tex = await loadTexture('./assets/textures/example.webp', renderer.gl);
+    } catch (e) {
+        console.warn('Failed to load example.webp, continuing without texture.', e);
+    }
+
+    const mat = new Material({
+        color: [0.78, 0.84, 0.92],
+        useTexture: false,
+        texture: tex
+    });
+
+    const cube = Mesh.createCube(mat);
+    cube.name = 'Main Cube';
+    cube.position = [0, 0.5, 0];
+    scene.add(cube);
+
+    editor = new Editor(scene, camera, renderer);
+    loop();
+}
+
+function loop() {
+    const now = performance.now();
+    scene.update(Math.min(0.1, (now - lastTime) / 1000));
+    lastTime = now;
+    editor.update();
+    renderer.render(scene, camera);
+    requestAnimationFrame(loop);
+}
+
+init();
+
+===== FILE: modeler/export.js =====
+export function exportModelToJSON(model) {
+    return JSON.stringify(model.toJSON(), null, 2);
+}
+
+===== FILE: modeler/meshTools.js =====
+import { Modeler } from './modeler.js';
+
+export function createCubeModel() {
+    const m = new Modeler();
+    m.addVertex(-0.5, -0.5,  0.5);
+    m.addVertex( 0.5, -0.5,  0.5);
+    m.addVertex( 0.5,  0.5,  0.5);
+    m.addVertex(-0.5,  0.5,  0.5);
+    m.addVertex(-0.5, -0.5, -0.5);
+    m.addVertex( 0.5, -0.5, -0.5);
+    m.addVertex( 0.5,  0.5, -0.5);
+    m.addVertex(-0.5,  0.5, -0.5);
+
+    m.addFace(0,1,2); m.addFace(0,2,3);
+    m.addFace(4,5,6); m.addFace(4,6,7);
+    m.addFace(0,4,7); m.addFace(0,7,3);
+    m.addFace(1,5,6); m.addFace(1,6,2);
+    m.addFace(3,2,6); m.addFace(3,6,7);
+    m.addFace(0,1,5); m.addFace(0,5,4);
+
+    return m;
+}
+
+===== FILE: modeler/modeler.js =====
+export class Modeler {
+    constructor() {
+        this.vertices = [];
+        this.colors = [];
+        this.uvs = [];
+        this.indices = [];
+    }
+
+    addVertex(x, y, z, r = 1, g = 1, b = 1, u = 0, v = 0) {
+        this.vertices.push([x, y, z]);
+        this.colors.push([r, g, b]);
+        this.uvs.push([u, v]);
+    }
+
+    addFace(i0, i1, i2) {
+        this.indices.push([i0, i1, i2]);
+    }
+
+    toJSON() {
+        return {
+            vertices: this.vertices,
+            colors: this.colors,
+            uvs: this.uvs,
+            indices: this.indices
+        };
+    }
+}
+
+===== FILE: modeler/uvTools.js =====
+export function planarUV(model, axis = 'y') {
+    model.uvs = model.vertices.map(([x, y, z]) => {
+        if (axis === 'y') return [(x + 1) * 0.5, (z + 1) * 0.5];
+        if (axis === 'x') return [(y + 1) * 0.5, (z + 1) * 0.5];
+        return [(x + 1) * 0.5, (y + 1) * 0.5];
+    });
+}
+
+*/
