@@ -9,19 +9,51 @@ export class AnimationClip {
         this.tracks.push({ property, times, values });
     }
 
+    addBoneKeyframe(boneName, property, time, value) {
+        let track = this.tracks.find(candidate => candidate.boneName === boneName && candidate.property === property);
+        if (!track) {
+            track = { boneName, property, times: [], values: [] };
+            this.tracks.push(track);
+        }
+        const existing = track.times.findIndex(keyTime => Math.abs(keyTime - time) < 1e-6);
+        if (existing >= 0) track.values[existing] = [...value];
+        else {
+            const insertAt = track.times.findIndex(keyTime => keyTime > time);
+            const index = insertAt < 0 ? track.times.length : insertAt;
+            track.times.splice(index, 0, time);
+            track.values.splice(index, 0, [...value]);
+        }
+    }
+
     apply(target, time) {
         const sampleTime = ((time % this.duration) + this.duration) % this.duration;
         this.tracks.forEach(track => {
             if (!track.times.length) return;
-            let next = track.times.findIndex(value => value >= sampleTime);
-            if (next < 0) next = track.times.length - 1;
-            const previous = Math.max(0, next - 1);
-            const start = track.times[previous];
-            const end = track.times[next];
-            const amount = end === start ? 0 : (sampleTime - start) / (end - start);
+            const trackTarget = track.boneName ? target.skeleton?.find(track.boneName) : target;
+            if (!trackTarget) return;
+            let next = track.times.findIndex(value => value > sampleTime);
+            let previous;
+            let start;
+            let end;
+            let time = sampleTime;
+            if (next < 0) {
+                previous = track.times.length - 1;
+                next = 0;
+                start = track.times[previous];
+                end = track.times[0] + this.duration;
+            } else if (next === 0) {
+                previous = track.times.length - 1;
+                start = track.times[previous] - this.duration;
+                end = track.times[0];
+            } else {
+                previous = next - 1;
+                start = track.times[previous];
+                end = track.times[next];
+            }
+            const amount = end === start ? 0 : (time - start) / (end - start);
             const from = track.values[previous];
             const to = track.values[next];
-            target[track.property] = from.map((value, index) => value + (to[index] - value) * amount);
+            trackTarget[track.property] = from.map((value, index) => value + (to[index] - value) * amount);
         });
     }
 }

@@ -220,8 +220,14 @@ export function createInspectorPanel(gl, textureLibrary, onSelectFace) {
         opacity.step = '0.01';
         opacity.value = faceColor[3] ?? 1;
         opacity.setAttribute('aria-label', 'Face opacity');
-        opacity.addEventListener('input', () => { faceColor[3] = Number(opacity.value); });
-        opacityGroup.appendChild(opacity);
+        const opacityValue = document.createElement('output');
+        opacityValue.className = 'range-value';
+        opacityValue.textContent = `${Math.round(Number(opacity.value) * 100)}%`;
+        opacity.addEventListener('input', () => {
+            faceColor[3] = Number(opacity.value);
+            opacityValue.textContent = `${Math.round(Number(opacity.value) * 100)}%`;
+        });
+        opacityGroup.append(opacity, opacityValue);
         info.appendChild(opacityGroup);
 
         info.appendChild(addTextureSelect('Mesh image', currentMesh.textureAssetId, asset => {

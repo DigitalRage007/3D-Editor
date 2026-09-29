@@ -12,6 +12,7 @@ export class Renderer {
         window.addEventListener('resize', () => this.resize());
 
         this.program = null;
+        this.boneBuffer = null;
         this.ready = this.initProgram();
     }
 
@@ -105,6 +106,52 @@ export class Renderer {
             face.mesh.draw(gl, this.program, [face.faceIndex]);
         }
         gl.depthMask(true);
+        this.drawSkeletons(scene);
+    }
+
+    drawSkeletons(scene) {
+        const gl = this.gl;
+        const lineData = [];
+        scene.meshes.forEach(mesh => {
+            if (!mesh.skeleton.bones.length) return;
+            const model = mesh.getModelMatrix();
+            const transforms = mesh.skeleton.getWorldTransforms();
+            mesh.skeleton.bones.forEach((bone, index) => {
+                const transform = transforms.get(bone);
+                const localEnd = rotateVector(transform.rotation, [0, bone.length, 0]);
+                const start = transformPoint(model, transform.position);
+                const end = transformPoint(model, transform.position.map((value, axis) => value + localEnd[axis]));
+                const color = mesh.selectedBone === index ? [0.25, 0.9, 1] : [1, 0.68, 0.22];
+                lineData.push(...start, ...color, ...end, ...color);
+            });
+        });
+        if (!lineData.length) return;
+
+        const program = this.program;
+        const position = gl.getAttribLocation(program, 'aPosition');
+        const color = gl.getAttribLocation(program, 'aColor');
+        const uv = gl.getAttribLocation(program, 'aUV');
+        if (!this.boneBuffer) this.boneBuffer = gl.createBuffer();
+        gl.disable(gl.DEPTH_TEST);
+        gl.depthMask(false);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.boneBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(lineData), gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(position);
+        gl.vertexAttribPointer(position, 3, gl.FLOAT, false, 24, 0);
+        gl.enableVertexAttribArray(color);
+        gl.vertexAttribPointer(color, 3, gl.FLOAT, false, 24, 12);
+        gl.disableVertexAttribArray(uv);
+        gl.vertexAttrib2f(uv, 0, 0);
+        gl.uniformMatrix4fv(gl.getUniformLocation(program, 'uModel'), false, identityMatrix());
+        gl.uniform4fv(gl.getUniformLocation(program, 'uColor'), new Float32Array([1, 1, 1, 1]));
+        gl.uniform1i(gl.getUniformLocation(program, 'uUseTexture'), 0);
+        gl.uniform1f(gl.getUniformLocation(program, 'uFaceSelected'), 0);
+        gl.uniform4f(gl.getUniformLocation(program, 'uUVTransform'), 1, 1, 0, 0);
+        gl.uniform1f(gl.getUniformLocation(program, 'uUVRotation'), 0);
+        gl.uniform2f(gl.getUniformLocation(program, 'uUVCenter'), 0.5, 0.5);
+        gl.drawArrays(gl.LINES, 0, lineData.length / 6);
+        gl.depthMask(true);
+        gl.enable(gl.DEPTH_TEST);
     }
 }
 
@@ -113,4 +160,12 @@ function transformPoint(matrix, point) {
     const y = matrix[1] * point[0] + matrix[5] * point[1] + matrix[9] * point[2] + matrix[13];
     const z = matrix[2] * point[0] + matrix[6] * point[1] + matrix[10] * point[2] + matrix[14];
     return [x, y, z];
+}
+
+function rotateVector(matrix, vector) {
+    return matrix.map(row => row.reduce((sum, value, axis) => sum + value * vector[axis], 0));
+}
+
+function identityMatrix() {
+    return new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 }

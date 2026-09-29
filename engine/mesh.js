@@ -29,6 +29,8 @@ export class Mesh {
         this.faceCount = 0;
         this.selectedFace = -1;
         this.selectedVertex = null;
+        this.selectedBone = null;
+        this.vertexWeights = new Map();
         this.polygons = [];
         this.faceRanges = [];
         this.skeleton = new Skeleton();
@@ -185,6 +187,7 @@ export class Mesh {
                 + frame.tangent[axis] * (x * cosine - y * sine)
                 + frame.bitangent[axis] * (x * sine + y * cosine));
             vertex.splice(0, 3, ...rotated);
+            this.updateBindVertex(vertex);
         });
         this.rebuildRenderData();
     }
@@ -202,6 +205,7 @@ export class Mesh {
                 + frame.bitangent[axis] * y
                 + frame.normal[axis] * normalOffset);
             vertex.splice(0, 3, ...scaled);
+            this.updateBindVertex(vertex);
         });
         this.rebuildRenderData();
     }
@@ -222,12 +226,111 @@ export class Mesh {
         return { vertices, center, tangent, bitangent, normal };
     }
 
+    setVertexBoneWeight(faceIndex, vertexIndex, bone, weight = 1) {
+        const vertex = this.polygons[faceIndex]?.[vertexIndex];
+        if (!vertex || !this.skeleton.bones.includes(bone)) return false;
+        let skin = this.vertexWeights.get(vertex);
+        if (!skin) {
+            skin = { bindPosition: [...vertex], weights: new Map() };
+            this.vertexWeights.set(vertex, skin);
+        }
+        const normalizedWeight = Math.max(0, Math.min(1, weight));
+        if (normalizedWeight === 0) skin.weights.delete(bone);
+        else skin.weights.set(bone, normalizedWeight);
+        const total = [...skin.weights.values()].reduce((sum, value) => sum + value, 0);
+        if (total > 1) skin.weights.forEach((value, weightedBone) => skin.weights.set(weightedBone, value / total));
+        if (!skin.weights.size) this.vertexWeights.delete(vertex);
+        return true;
+    }
+
+    autoWeightBone(bone, radius = Math.max(0.05, bone?.length || 0.5)) {
+        if (!bone || !this.skeleton.bones.includes(bone)) return 0;
+        const bind = this.skeleton.getWorldTransforms(true).get(bone);
+        const start = bind.position;
+        const direction = rotate3(bind.rotation, [0, bone.length, 0]);
+        const end = start.map((value, axis) => value + direction[axis]);
+        const segment = end.map((value, axis) => value - start[axis]);
+        const segmentLengthSquared = Math.max(dot3(segment, segment), 1e-8);
+        const vertices = new Set(this.polygons.flat());
+        let assigned = 0;
+        vertices.forEach(vertex => {
+            let skin = this.vertexWeights.get(vertex);
+            if (!skin) {
+                skin = { bindPosition: [...vertex], weights: new Map() };
+                this.vertexWeights.set(vertex, skin);
+            }
+            const point = skin.bindPosition;
+            const offset = point.map((value, axis) => value - start[axis]);
+            const along = Math.max(0, Math.min(1, dot3(offset, segment) / segmentLengthSquared));
+            const nearest = start.map((value, axis) => value + segment[axis] * along);
+            const distance = Math.hypot(...point.map((value, axis) => value - nearest[axis]));
+            if (distance > radius) return;
+            const influence = Math.pow(1 - distance / radius, 2);
+            const otherTotal = [...skin.weights].reduce((sum, [otherBone, value]) => sum + (otherBone === bone ? 0 : value), 0);
+            skin.weights.set(bone, Math.max(skin.weights.get(bone) || 0, influence * Math.max(0, 1 - otherTotal)));
+            assigned++;
+        });
+        return assigned;
+    }
+
+    clearVertexBoneWeights(faceIndex, vertexIndex) {
+        const vertex = this.polygons[faceIndex]?.[vertexIndex];
+        if (!vertex) return false;
+        return this.vertexWeights.delete(vertex);
+    }
+
+    removeBone(index) {
+        const bone = this.skeleton.bones[index];
+        if (!bone) return false;
+        const removed = new Set(this.skeleton.removeBone(bone));
+        this.vertexWeights.forEach((skin, vertex) => {
+            removed.forEach(removedBone => skin.weights.delete(removedBone));
+            if (!skin.weights.size) this.vertexWeights.delete(vertex);
+        });
+        this.selectedBone = this.skeleton.bones.length ? Math.min(index, this.skeleton.bones.length - 1) : null;
+        return true;
+    }
+
+    getDeformedPoint(vertex, transforms = null, bindTransforms = null) {
+        const skin = this.vertexWeights.get(vertex);
+        if (!skin?.weights.size) return [...vertex];
+        const current = transforms || this.skeleton.getWorldTransforms();
+        const bind = bindTransforms || this.skeleton.getWorldTransforms(true);
+        return deformPoint(skin, current, bind);
+    }
+
+    getDeformedVertices() {
+        const transforms = this.skeleton.getWorldTransforms();
+        const bindTransforms = this.skeleton.getWorldTransforms(true);
+        const positions = [];
+        this.polygons.forEach(polygon => polygon.forEach(vertex => {
+            positions.push(...this.getDeformedPoint(vertex, transforms, bindTransforms));
+        }));
+        return new Float32Array(positions);
+    }
+
+    getVertexWeightData() {
+        return this.polygons.map(polygon => polygon.map(vertex => {
+            const skin = this.vertexWeights.get(vertex);
+            return {
+                bindPosition: skin ? [...skin.bindPosition] : [...vertex],
+                weights: skin ? [...skin.weights].map(([bone, weight]) => ({ bone: bone.name, weight })) : [],
+                unweightedWeight: skin ? Math.max(0, 1 - [...skin.weights.values()].reduce((sum, weight) => sum + weight, 0)) : 1
+            };
+        }));
+    }
+
     setFaceVertex(faceIndex, vertexIndex, position) {
         if (!this.polygons[faceIndex]?.[vertexIndex]) return;
         const previous = this.polygons[faceIndex][vertexIndex];
+        const skin = this.vertexWeights.get(previous);
         this.polygons.forEach(polygon => polygon.forEach((vertex, otherVertex) => {
             if (vertex === previous || Math.hypot(vertex[0] - previous[0], vertex[1] - previous[1], vertex[2] - previous[2]) < 0.0001) {
-                polygon[otherVertex] = [...position];
+                const replacement = [...position];
+                polygon[otherVertex] = replacement;
+                const previousSkin = this.vertexWeights.get(vertex) || skin;
+                if (previousSkin) this.vertexWeights.set(replacement, { bindPosition: [...position], weights: new Map(previousSkin.weights) });
+                this.vertexWeights.delete(vertex);
             }
         }));
         this.rebuildRenderData();
@@ -264,6 +367,13 @@ export class Mesh {
         }));
         if (connected.size < 2) return false;
         const merged = [...source].map((_, axis) => [...connected].reduce((sum, vertex) => sum + vertex[axis] / connected.size, 0));
+        const skins = [...connected].map(vertex => this.vertexWeights.get(vertex)).filter(Boolean);
+        if (skins.length) {
+            const weights = new Map();
+            skins.forEach(skin => skin.weights.forEach((weight, bone) => weights.set(bone, (weights.get(bone) || 0) + weight / skins.length)));
+            this.vertexWeights.set(merged, { bindPosition: [...merged], weights });
+        }
+        connected.forEach(vertex => this.vertexWeights.delete(vertex));
         this.polygons = this.polygons.map(polygon => polygon.map(vertex => connected.has(vertex) ? merged : vertex));
         this.rebuildRenderData();
         return true;
@@ -318,12 +428,25 @@ export class Mesh {
             && firstTransform.offset.every((value, axis) => value === secondTransform.offset[axis]);
     }
 
+    updateBindVertex(vertex) {
+        const skin = this.vertexWeights.get(vertex);
+        if (skin) skin.bindPosition = [...vertex];
+    }
+
     rebuildRenderData() {
         const verticesByPosition = new Map();
         this.polygons = this.polygons.map(polygon => polygon.map(vertex => {
             const key = vertex.join(',');
             const attachedVertex = verticesByPosition.get(key);
-            if (attachedVertex) return attachedVertex;
+            if (attachedVertex) {
+                const sourceSkin = this.vertexWeights.get(vertex);
+                if (sourceSkin && !this.vertexWeights.has(attachedVertex)) this.vertexWeights.set(attachedVertex, sourceSkin);
+                else if (sourceSkin && sourceSkin !== this.vertexWeights.get(attachedVertex)) {
+                    const attachedSkin = this.vertexWeights.get(attachedVertex);
+                    sourceSkin.weights.forEach((weight, bone) => attachedSkin.weights.set(bone, Math.max(attachedSkin.weights.get(bone) || 0, weight)));
+                }
+                return attachedVertex;
+            }
             verticesByPosition.set(key, vertex);
             return vertex;
         }));
@@ -461,6 +584,10 @@ export class Mesh {
         const uUVCenter = gl.getUniformLocation(program, 'uUVCenter');
         const uFaceSelected = gl.getUniformLocation(program, 'uFaceSelected');
         gl.uniformMatrix4fv(uModel, false, this.getModelMatrix());
+        if (this.vertexWeights.size) {
+            gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, this.getDeformedVertices(), gl.DYNAMIC_DRAW);
+        }
         const facesToDraw = faceIndices || this.faceRanges.map((_, faceIndex) => faceIndex);
         for (const faceIndex of facesToDraw) {
             const color = this.faceColors[faceIndex] || [...this.material.color, 1];
@@ -520,6 +647,10 @@ function dot3(a, b) {
     return a.reduce((sum, value, axis) => sum + value * b[axis], 0);
 }
 
+function rotate3(matrix, vector) {
+    return matrix.map(row => row.reduce((sum, value, axis) => sum + value * vector[axis], 0));
+}
+
 function cross3(a, b) {
     return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 }
@@ -527,6 +658,24 @@ function cross3(a, b) {
 function normalize3(vector) {
     const length = Math.hypot(...vector);
     return length > 1e-10 ? vector.map(value => value / length) : null;
+}
+
+function deformPoint(skin, poseTransforms, bindTransforms) {
+    const totalWeight = [...skin.weights.values()].reduce((sum, weight) => sum + weight, 0);
+    if (totalWeight <= 1e-8) return [...skin.bindPosition];
+    const result = [0, 0, 0];
+    const normalization = totalWeight > 1 ? 1 / totalWeight : 1;
+    skin.weights.forEach((weight, bone) => {
+        const pose = poseTransforms.get(bone);
+        const bind = bindTransforms.get(bone);
+        if (!pose || !bind) return;
+        const fromBind = skin.bindPosition.map((value, axis) => value - bind.position[axis]);
+        const local = bind.rotation[0].map((_, column) => bind.rotation.reduce((sum, row, index) => sum + row[column] * fromBind[index], 0));
+        const world = pose.position.map((value, axis) => value + pose.rotation[axis].reduce((sum, component, index) => sum + component * local[index], 0));
+        world.forEach((value, axis) => { result[axis] += value * weight * normalization; });
+    });
+    if (totalWeight < 1) skin.bindPosition.forEach((value, axis) => { result[axis] += value * (1 - totalWeight); });
+    return result;
 }
 
 function makeFaceEdges(vertices, uvs) {

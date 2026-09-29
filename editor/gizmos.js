@@ -140,7 +140,7 @@ export class Gizmos {
             const model = mesh.getModelMatrix();
             mesh.polygons.forEach((polygon, faceIndex) => {
                 if (polygon.length < 3) return;
-                const worldVertices = polygon.map(vertex => transformPoint(model, vertex));
+                const worldVertices = polygon.map(vertex => transformPoint(model, mesh.getDeformedPoint(vertex)));
                 for (let index = 1; index < worldVertices.length - 1; index++) {
                     const distance = intersectRayTriangle(ray.origin, ray.direction, worldVertices[0], worldVertices[index], worldVertices[index + 1]);
                     if (distance !== null && (hit === null || distance < hit.distance)) {
@@ -156,7 +156,7 @@ export class Gizmos {
             let nearestVertex = null;
             let nearestDistance = 0.08;
             polygon.forEach((vertex, vertexIndex) => {
-                const projected = this.project(vertex, hit.mesh.getModelMatrix());
+                const projected = this.project(hit.mesh.getDeformedPoint(vertex), hit.mesh.getModelMatrix());
                 const distance = Math.hypot(projected[0] - x, projected[1] - y);
                 if (distance < nearestDistance) {
                     nearestVertex = { ...hit, vertexIndex, vertexPosition: [...vertex], vertex: true, screenDistance: distance };

@@ -30,7 +30,10 @@ export class Editor {
             onMergeFace: () => this.mergeSelectedFace(),
             onMergeVertices: () => this.mergeSelectedVertices(),
             onAddVertex: () => this.addVertex(),
-            onAddBone: () => this.addBone(),
+            onAddBone: parentIndex => this.addBone(parentIndex),
+            onRemoveBone: index => this.removeBone(index),
+            onKeyBone: (index, time) => this.keyBonePose(index, time),
+            onKeyBone: (index, time) => this.keyBonePose(index, time),
             onPlayAnimation: () => this.playAnimation(),
             onImportMesh: file => this.importMesh(file),
             onImportTexture: file => this.importTexture(file),
@@ -116,11 +119,24 @@ export class Editor {
         this.ui.setSelected(this.selected);
     }
 
-    addBone() {
+    addBone(parentIndex = null) {
         if (!this.selected) return;
-        const parent = this.selected.skeleton.bones[this.selected.skeleton.bones.length - 1] || null;
-        this.selected.skeleton.addBone(undefined, parent);
-        this.ui.setSelected(this.selected);
+        const parent = Number.isInteger(parentIndex) ? this.selected.skeleton.bones[parentIndex] : null;
+        const bone = this.selected.skeleton.addBone(undefined, parent);
+        this.selected.selectedBone = this.selected.skeleton.bones.indexOf(bone);
+        this.ui.refreshBones();
+    }
+
+    removeBone(index) {
+        if (!this.selected || !this.selected.removeBone(index)) return;
+        this.ui.refreshBones();
+    }
+
+    keyBonePose(index, time) {
+        const bone = this.selected?.skeleton.bones[index];
+        if (!bone) return;
+        if (!this.selected.animationClip) this.selected.animationClip = new AnimationClip('Rig Animation', 2);
+        this.selected.animationClip.addBoneKeyframe(bone.name, 'rotation', time, bone.rotation);
     }
 
     playAnimation() {
@@ -205,6 +221,16 @@ export class Editor {
             cloned.scale = [...bone.scale];
             bones.set(bone, cloned);
         });
+        source.polygons.forEach((polygon, faceIndex) => polygon.forEach((vertex, vertexIndex) => {
+            const skin = source.vertexWeights.get(vertex);
+            if (!skin) return;
+            const duplicateVertex = duplicate.polygons[faceIndex]?.[vertexIndex];
+            if (!duplicateVertex) return;
+            duplicate.vertexWeights.set(duplicateVertex, {
+                bindPosition: [...skin.bindPosition],
+                weights: new Map([...skin.weights].map(([bone, weight]) => [bones.get(bone), weight]).filter(([bone]) => bone))
+            });
+        }));
         duplicate.animationClip = source.animationClip;
         this.scene.add(duplicate);
         this.select(duplicate);
@@ -224,6 +250,9 @@ export class Editor {
 
     exportScene() {
         const data = {
+            format: 'lightweight-3d-scene',
+            version: 1,
+            coordinateSystem: { handedness: 'right', upAxis: 'Y', units: 'editor' },
             meshes: this.scene.meshes.map(mesh => ({
                 name: mesh.name,
                 position: mesh.position,
@@ -236,7 +265,27 @@ export class Editor {
                 faceTextureIds: mesh.faceTextureIds,
                 faceUvs: mesh.faceUvs,
                 faceUvTransforms: mesh.faceUvTransforms,
-                bones: mesh.skeleton.bones.map(bone => ({ name: bone.name, parent: bone.parent?.name || null, position: bone.position, rotation: bone.rotation, scale: bone.scale }))
+                vertexWeights: mesh.getVertexWeightData(),
+                animation: mesh.animationClip ? {
+                    name: mesh.animationClip.name,
+                    duration: mesh.animationClip.duration,
+                    tracks: mesh.animationClip.tracks.map(track => ({
+                        boneName: track.boneName || null,
+                        property: track.property,
+                        times: track.times,
+                        values: track.values
+                    }))
+                } : null,
+                bones: mesh.skeleton.bones.map(bone => ({
+                    name: bone.name,
+                    parent: bone.parent?.name || null,
+                    position: bone.position,
+                    rotation: bone.rotation,
+                    scale: bone.scale,
+                    length: bone.length,
+                    bindPosition: bone.bindPosition,
+                    bindRotation: bone.bindRotation
+                }))
             }))
         };
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });

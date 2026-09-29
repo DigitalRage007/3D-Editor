@@ -1,9 +1,10 @@
 import { createHierarchyPanel } from './panels/hierarchy.js';
 import { createInspectorPanel } from './panels/inspector.js';
 import { createAssetsPanel } from './panels/assets.js';
+import { createBonesPanel } from './panels/bones.js';
 
 export function createUI(root, options) {
-    const { scene, onSelect, onSelectFace, onSetPickMode, onAddCube, onAddPlane, onAddSphere, onAddCylinder, onDuplicate, onAddFace, onExtrudeFace, onMergeFace, onMergeVertices, onAddVertex, onAddBone, onPlayAnimation, onImportMesh, onImportTexture, onDelete, onResetCamera, onExport } = options;
+    const { scene, onSelect, onSelectFace, onSetPickMode, onAddCube, onAddPlane, onAddSphere, onAddCylinder, onDuplicate, onAddFace, onExtrudeFace, onMergeFace, onMergeVertices, onAddVertex, onAddBone, onRemoveBone, onKeyBone, onPlayAnimation, onImportMesh, onImportTexture, onDelete, onResetCamera, onExport } = options;
     root.style.pointerEvents = 'none';
     root.innerHTML = '';
 
@@ -50,6 +51,15 @@ export function createUI(root, options) {
         .check-row input { width: auto; }
         .asset-section-title { margin-top: 18px; }
         .asset-list { display: grid; gap: 4px; margin-bottom: 8px; color: #c8d4e2; }
+        .bone-list { display: grid; gap: 4px; max-height: 150px; overflow: auto; margin-bottom: 8px; }
+        .bone-item { padding: 5px 7px; color: #c8d4e2; background: #101722; border: 1px solid #26384d; text-align: left; cursor: pointer; }
+        .bone-item.selected { color: #fff; border-color: #9ed8ff; background: #284a68; }
+        .bone-slider-group { margin-top: 8px; }
+        .bone-slider-label { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+        .bone-slider-label output, .bone-weight-group output { color: #ffd071; font-variant-numeric: tabular-nums; }
+        .range-value { color: #ffd071; font-size: 11px; font-variant-numeric: tabular-nums; }
+        .bone-weight-group { margin-top: 16px; padding-top: 12px; border-top: 1px solid #344657; }
+        .bone-weight-group .editor-button { margin: 4px 4px 0 0; }
         .asset-item { padding: 5px 7px; background: #101722; border: 1px solid #26384d; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .uv-workspace { display: none; flex-direction: column; width: 100%; height: min(68vh, 620px); min-height: 360px; box-sizing: border-box; padding: 10px; background: rgba(16, 22, 32, 0.96); border: 1px solid rgba(164, 183, 211, 0.2); pointer-events: auto; }
         .uv-workspace-title { margin: 0 0 8px; color: #9ed8ff; font-size: 11px; text-transform: uppercase; }
@@ -116,7 +126,7 @@ export function createUI(root, options) {
     button('+ Face', onAddFace);
     button('Extrude', onExtrudeFace);
     button('+ Vertex', onAddVertex);
-    button('+ Bone', onAddBone);
+    button('+ Bone', () => onAddBone(null));
     button('Play', onPlayAnimation);
     button('Delete', onDelete);
 
@@ -164,7 +174,13 @@ export function createUI(root, options) {
     uvRotation.max = '180';
     uvRotation.step = '1';
     uvRotation.value = '0';
-    uvRotationGroup.append(uvRotationLabel, uvRotation);
+    const uvRotationValue = document.createElement('output');
+    uvRotationValue.className = 'range-value';
+    uvRotationValue.textContent = '0 deg (0%)';
+    const uvRotationLabelRow = document.createElement('div');
+    uvRotationLabelRow.className = 'bone-slider-label';
+    uvRotationLabelRow.append(uvRotationLabel, uvRotationValue);
+    uvRotationGroup.append(uvRotationLabelRow, uvRotation);
     uvTransformRow.appendChild(uvRotationGroup);
     let previousUvRotation = 0;
 
@@ -228,7 +244,13 @@ export function createUI(root, options) {
     imageRotation.max = '180';
     imageRotation.step = '1';
     imageRotation.value = '0';
-    imageRotationGroup.append(imageRotationLabel, imageRotation);
+    const imageRotationValue = document.createElement('output');
+    imageRotationValue.className = 'range-value';
+    imageRotationValue.textContent = '0 deg (0%)';
+    const imageRotationLabelRow = document.createElement('div');
+    imageRotationLabelRow.className = 'bone-slider-label';
+    imageRotationLabelRow.append(imageRotationLabel, imageRotationValue);
+    imageRotationGroup.append(imageRotationLabelRow, imageRotation);
     imageTransformRow.appendChild(imageRotationGroup);
     let previousImageRotation = 0;
     const imageMirrorButton = (label, axis) => {
@@ -270,6 +292,7 @@ export function createUI(root, options) {
     imageRotation.addEventListener('input', () => {
         if (!selectedMesh) return;
         const nextRotation = Number(imageRotation.value);
+        imageRotationValue.textContent = `${nextRotation} deg (${Math.round(Math.abs(nextRotation) / 180 * 100)}%)`;
         selectedMesh.faceUvTransforms[selectedMesh.selectedFace].rotation += (nextRotation - previousImageRotation) * Math.PI / 180;
         previousImageRotation = nextRotation;
     });
@@ -283,12 +306,14 @@ export function createUI(root, options) {
         mergeVerticesButton.disabled = !selectedMesh?.selectedVertex;
         previousImageRotation = 0;
         imageRotation.value = '0';
+        imageRotationValue.textContent = '0 deg (0%)';
         mirrorU.classList.toggle('selected', !!transform?.flipX);
         mirrorV.classList.toggle('selected', !!transform?.flipY);
     }
     uvRotation.addEventListener('input', () => {
         if (!selectedMesh) return;
         const nextRotation = Number(uvRotation.value);
+        uvRotationValue.textContent = `${nextRotation} deg (${Math.round(Math.abs(nextRotation) / 180 * 100)}%)`;
         selectedMesh.rotateFaceGeometry(selectedMesh.selectedFace, (nextRotation - previousUvRotation) * Math.PI / 180);
         previousUvRotation = nextRotation;
         drawUvWorkspace();
@@ -435,6 +460,7 @@ export function createUI(root, options) {
     const hierarchy = createHierarchyPanel(scene, onSelect);
     const inspector = createInspectorPanel(options.gl, options.textureLibrary, onSelectFace);
     const assets = createAssetsPanel(options.textureLibrary, onImportMesh, onImportTexture);
+    const bones = createBonesPanel({ onAddBone, onRemoveBone, onKeyBone });
 
     const panelDisclosure = (label, element, open = false) => {
         const disclosure = document.createElement('details');
@@ -448,11 +474,13 @@ export function createUI(root, options) {
     panels.appendChild(panelDisclosure('Hierarchy', hierarchy.element));
     panels.appendChild(panelDisclosure('Inspector', inspector.element, true));
     panels.appendChild(panelDisclosure('Assets', assets.element));
+    panels.appendChild(panelDisclosure('Rig and Skinning', bones.element));
 
     return {
-        setSelected: mesh => { selectedMesh = mesh; inspector.setMesh(mesh); refreshUvTextures(); refreshUvTransformControls(); refreshFaceImageControls(); drawUvWorkspace(); },
+        setSelected: mesh => { selectedMesh = mesh; inspector.setMesh(mesh); bones.setMesh(mesh); refreshUvTextures(); refreshUvTransformControls(); refreshFaceImageControls(); drawUvWorkspace(); },
         setFace: faceIndex => { inspector.setFace(faceIndex); refreshUvTransformControls(); refreshFaceImageControls(); drawUvWorkspace(); },
         refreshHierarchy: hierarchy.refresh,
+        refreshBones: bones.refresh,
         refreshTextures: () => { assets.refresh(); inspector.refresh(); refreshUvTextures(); },
         updateUvWorkspace: drawUvWorkspace,
         setPickMode: mode => {
