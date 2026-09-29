@@ -817,8 +817,10 @@ function deformPoint(skin, poseTransforms, bindTransforms) {
         const bind = bindTransforms.get(bone);
         if (!pose || !bind) return;
         const fromBind = skin.bindPosition.map((value, axis) => value - bind.position[axis]);
-        const local = bind.rotation[0].map((_, column) => bind.rotation.reduce((sum, row, index) => sum + row[column] * fromBind[index], 0));
-        const world = pose.position.map((value, axis) => value + pose.rotation[axis].reduce((sum, component, index) => sum + component * local[index], 0));
+        const local = bind.rotation[0].map((_, column) => bind.rotation.reduce((sum, row, index) => sum + row[column] * fromBind[index], 0))
+            .map((value, axis) => Math.abs(bind.scale[axis]) > 1e-8 ? value / bind.scale[axis] : value);
+        const scaledLocal = local.map((value, axis) => value * pose.scale[axis]);
+        const world = pose.position.map((value, axis) => value + pose.rotation[axis].reduce((sum, component, index) => sum + component * scaledLocal[index], 0));
         world.forEach((value, axis) => { result[axis] += value * weight * normalization; });
     });
     if (totalWeight < 1) skin.bindPosition.forEach((value, axis) => { result[axis] += value * (1 - totalWeight); });

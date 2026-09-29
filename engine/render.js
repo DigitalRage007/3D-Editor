@@ -188,7 +188,7 @@ export class Renderer {
             const transforms = mesh.skeleton.getWorldTransforms();
             mesh.skeleton.bones.forEach((bone, index) => {
                 const transform = transforms.get(bone);
-                const localEnd = rotateVector(transform.rotation, [0, bone.length, 0]);
+                const localEnd = rotateVector(transform.rotation, [0, bone.length * transform.scale[1], 0]);
                 const start = transformPoint(model, transform.position);
                 const end = transformPoint(model, transform.position.map((value, axis) => value + localEnd[axis]));
                 const color = mesh.selectedBone === index ? [0.25, 0.9, 1] : [1, 0.68, 0.22];

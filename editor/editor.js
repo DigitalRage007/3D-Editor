@@ -36,8 +36,13 @@ export class Editor {
             onAddVertex: () => this.addVertex(),
             onAddBone: parentIndex => this.addBone(parentIndex),
             onRemoveBone: index => this.removeBone(index),
-            onKeyBone: (index, time) => this.keyBonePose(index, time),
-            onPlayAnimation: () => this.playAnimation(),
+            onCreateAnimation: () => this.createAnimation(),
+            onKeyPose: (index, time) => this.keyBonePose(index, time),
+            onDeleteBoneKeys: (index, time) => this.deleteBoneKeyframes(index, time),
+            onSeekAnimation: time => this.seekAnimation(time),
+            onToggleAnimation: time => this.playAnimation(time),
+            onRenameAnimation: name => this.renameAnimation(name),
+            onSetAnimationDuration: duration => this.setAnimationDuration(duration),
             onImportMesh: file => this.importMesh(file),
             onImportTexture: file => this.importTexture(file),
             onDelete: () => this.deleteSelected(),
@@ -70,6 +75,7 @@ export class Editor {
     update() {
         this.gizmos.update();
         this.ui.updateUvWorkspace();
+        this.ui.updateAnimationWorkspace(this.selected?.animationPlayer.time || 0, this.selected?.animationPlayer.playing || false);
         const allPolygons = this.scene.meshes.reduce((sum, mesh) => sum + mesh.faceCount, 0);
         this.ui.setPolygonCount(this.selected?.faceCount || 0, allPolygons);
     }
@@ -147,27 +153,76 @@ export class Editor {
         if (!this.selected) return;
         this.recordHistory();
         if (!this.selected.removeBone(index)) return;
+        if (this.selected.animationClip) {
+            this.selected.animationClip.tracks = this.selected.animationClip.tracks.filter(track => !track.boneName || this.selected.skeleton.find(track.boneName));
+        }
         this.ui.refreshBones();
     }
 
     keyBonePose(index, time) {
         const bone = this.selected?.skeleton.bones[index];
-        if (!bone) return;
+        if (!bone || !this.selected.animationClip) return;
         this.recordHistory();
-        if (!this.selected.animationClip) this.selected.animationClip = new AnimationClip('Rig Animation', 2);
+        this.selected.animationClip.addBoneKeyframe(bone.name, 'position', time, bone.position);
         this.selected.animationClip.addBoneKeyframe(bone.name, 'rotation', time, bone.rotation);
+        this.selected.animationClip.addBoneKeyframe(bone.name, 'scale', time, bone.scale);
+        this.ui.refreshBones();
     }
 
-    playAnimation() {
+    createAnimation() {
         if (!this.selected) return;
-        if (!this.selected.animationClip) {
-            this.recordHistory();
-            const clip = new AnimationClip('Transform Preview', 2);
-            clip.addTrack('rotation', [0, 1, 2], [[0, 0, 0], [0, Math.PI, 0], [0, Math.PI * 2, 0]]);
-            this.selected.animationClip = clip;
-        }
-        if (this.selected.animationPlayer.playing) this.selected.animationPlayer.stop();
-        else this.selected.animationPlayer.play(this.selected.animationClip);
+        this.recordHistory();
+        this.selected.animationClip = new AnimationClip(`${this.selected.name} Animation`, 2);
+        this.selected.animationPlayer.stop();
+        this.selected.animationPlayer.clip = this.selected.animationClip;
+        this.selected.animationPlayer.seek(0);
+        this.ui.refreshBones();
+    }
+
+    deleteBoneKeyframes(index, time) {
+        const bone = this.selected?.skeleton.bones[index];
+        if (!bone || !this.selected.animationClip) return;
+        const snapshot = this.selected.animationClip.tracks.some(track => track.boneName === bone.name && track.times.some(keyTime => Math.abs(keyTime - time) < 1e-3));
+        if (!snapshot) return;
+        this.recordHistory();
+        this.selected.animationClip.removeBoneKeyframes(bone.name, time);
+        this.ui.refreshBones();
+    }
+
+    seekAnimation(time) {
+        const player = this.selected?.animationPlayer;
+        if (!player || !this.selected.animationClip) return;
+        player.stop();
+        player.clip = this.selected.animationClip;
+        player.seek(time);
+    }
+
+    playAnimation(time = 0) {
+        const player = this.selected?.animationPlayer;
+        if (!player || !this.selected.animationClip) return false;
+        player.clip = this.selected.animationClip;
+        if (player.playing) player.stop();
+        else player.play(this.selected.animationClip, time);
+        this.ui.refreshBones();
+        return player.playing;
+    }
+
+    renameAnimation(name) {
+        const clip = this.selected?.animationClip;
+        if (!clip || !name.trim() || clip.name === name.trim()) return;
+        this.recordHistory();
+        clip.name = name.trim();
+    }
+
+    setAnimationDuration(duration) {
+        const clip = this.selected?.animationClip;
+        if (!clip) return;
+        const nextDuration = Math.max(0.1, Number(duration) || 0.1);
+        if (clip.duration === nextDuration) return;
+        this.recordHistory();
+        clip.setDuration(nextDuration);
+        this.selected.animationPlayer.seek(Math.min(this.selected.animationPlayer.time, clip.duration));
+        this.ui.refreshBones();
     }
 
     async importMesh(file) {
@@ -243,6 +298,7 @@ export class Editor {
                 bone.length = boneData.length || 0.5;
                 bone.bindPosition = [...(boneData.bindPosition || bone.position)];
                 bone.bindRotation = [...(boneData.bindRotation || bone.rotation)];
+                bone.bindScale = [...(boneData.bindScale || bone.scale)];
                 boneMap.set(bone.name, bone);
             });
             (meshData.bones || []).forEach(boneData => {
@@ -381,6 +437,9 @@ export class Editor {
             cloned.position = [...bone.position];
             cloned.rotation = [...bone.rotation];
             cloned.scale = [...bone.scale];
+            cloned.bindPosition = [...bone.bindPosition];
+            cloned.bindRotation = [...bone.bindRotation];
+            cloned.bindScale = [...bone.bindScale];
             bones.set(bone, cloned);
         });
         source.polygons.forEach((polygon, faceIndex) => polygon.forEach((vertex, vertexIndex) => {
@@ -393,7 +452,11 @@ export class Editor {
                 weights: new Map([...skin.weights].map(([bone, weight]) => [bones.get(bone), weight]).filter(([bone]) => bone))
             });
         }));
-        duplicate.animationClip = source.animationClip;
+        duplicate.animationClip = source.animationClip ? new AnimationClip(source.animationClip.name, source.animationClip.duration) : null;
+        source.animationClip?.tracks.forEach(track => {
+            if (track.boneName) track.times.forEach((time, index) => duplicate.animationClip.addBoneKeyframe(track.boneName, track.property, time, track.values[index]));
+            else duplicate.animationClip.addTrack(track.property, [...track.times], track.values.map(value => [...value]));
+        });
         this.scene.add(duplicate);
         this.select(duplicate);
     }
@@ -448,7 +511,8 @@ export class Editor {
                     scale: bone.scale,
                     length: bone.length,
                     bindPosition: bone.bindPosition,
-                    bindRotation: bone.bindRotation
+                    bindRotation: bone.bindRotation,
+                    bindScale: bone.bindScale
                 }))
             }))
         };
@@ -532,7 +596,8 @@ export class Editor {
                     scale: bone.scale,
                     length: bone.length,
                     bindPosition: bone.bindPosition,
-                    bindRotation: bone.bindRotation
+                    bindRotation: bone.bindRotation,
+                    bindScale: bone.bindScale
                 }))
             }))
         };

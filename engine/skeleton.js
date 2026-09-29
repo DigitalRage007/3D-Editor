@@ -9,6 +9,7 @@ export class Bone {
         this.length = 0.5;
         this.bindPosition = [...this.position];
         this.bindRotation = [...this.rotation];
+        this.bindScale = [...this.scale];
         if (parent) parent.children.push(this);
     }
 }
@@ -23,6 +24,7 @@ export class Skeleton {
         const bone = new Bone(name, parent);
         if (parent) bone.position = [0, parent.length, 0];
         bone.bindPosition = [...bone.position];
+        bone.bindScale = [...bone.scale];
         this.bones.push(bone);
         return bone;
     }
@@ -50,13 +52,15 @@ export class Skeleton {
             if (transforms.has(bone)) return transforms.get(bone);
             const localRotation = rotationMatrix(bindPose ? bone.bindRotation : bone.rotation);
             const localPosition = bindPose ? bone.bindPosition : bone.position;
+            const localScale = bindPose ? bone.bindScale : bone.scale;
             const parent = bone.parent ? resolve(bone.parent) : null;
             const transform = parent
                 ? {
                     rotation: multiplyRotation(parent.rotation, localRotation),
-                    position: add3(parent.position, rotate3(parent.rotation, localPosition))
+                    position: add3(parent.position, rotate3(parent.rotation, scale3(localPosition, parent.scale))),
+                    scale: multiply3(parent.scale, localScale)
                 }
-                : { rotation: localRotation, position: [...localPosition] };
+                : { rotation: localRotation, position: [...localPosition], scale: [...localScale] };
             transforms.set(bone, transform);
             return transform;
         };
@@ -86,4 +90,12 @@ function rotate3(matrix, vector) {
 
 function add3(a, b) {
     return a.map((value, index) => value + b[index]);
+}
+
+function scale3(vector, scale) {
+    return vector.map((value, index) => value * scale[index]);
+}
+
+function multiply3(a, b) {
+    return a.map((value, index) => value * b[index]);
 }

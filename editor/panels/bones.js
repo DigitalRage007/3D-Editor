@@ -1,10 +1,15 @@
-export function createBonesPanel({ onAddBone, onRemoveBone, onKeyBone, onChange = () => {}, onHistory = () => {} }) {
+export function createBonesPanel({ onAddBone, onRemoveBone, onCreateAnimation, onKeyPose, onDeleteBoneKeys, onSeekAnimation, onToggleAnimation, onRenameAnimation, onSetAnimationDuration, onChange = () => {}, onHistory = () => {} }) {
     const panel = document.createElement('div');
     panel.className = 'editor-panel bone-panel';
     let mesh = null;
-    let keyTime = 0;
+    let currentTime = 0;
+    let playbackTime = null;
+    let playButton = null;
+    let timelineInput = null;
+    let timelineLabel = null;
+    let syncPoseControls = [];
 
-    function addNumber(label, value, onInput, step = '0.05') {
+    function addNumber(label, value, onInput, step = '0.05', readValue = null) {
         const group = document.createElement('label');
         group.className = 'field-group';
         const caption = document.createElement('span');
@@ -16,15 +21,22 @@ export function createBonesPanel({ onAddBone, onRemoveBone, onKeyBone, onChange 
         input.step = step;
         input.value = value;
         input.addEventListener('change', () => { onHistory(); onInput(Number(input.value) || 0); });
+        if (readValue) syncPoseControls.push(() => {
+            if (document.activeElement !== input) input.value = String(readValue());
+        });
         group.append(caption, input);
         panel.appendChild(group);
     }
 
     function render() {
         panel.innerHTML = '';
+        syncPoseControls = [];
+        playButton = null;
+        timelineInput = null;
+        timelineLabel = null;
         const title = document.createElement('div');
         title.className = 'panel-title';
-        title.textContent = 'Rig and Skinning';
+        title.textContent = 'Rig and Animation';
         panel.appendChild(title);
         if (!mesh) {
             const empty = document.createElement('div');
@@ -62,6 +74,8 @@ export function createBonesPanel({ onAddBone, onRemoveBone, onKeyBone, onChange 
         addChild.addEventListener('click', () => onAddBone(mesh.selectedBone));
         panel.append(addRoot, addChild);
 
+        renderAnimationEditor();
+
         const bone = mesh.skeleton.bones[mesh.selectedBone];
         if (!bone) {
             const empty = document.createElement('div');
@@ -77,7 +91,11 @@ export function createBonesPanel({ onAddBone, onRemoveBone, onKeyBone, onChange 
         name.setAttribute('aria-label', 'Bone name');
         name.addEventListener('change', () => {
             onHistory();
+            const previousName = bone.name;
             bone.name = name.value.trim() || bone.name;
+            mesh.animationClip?.tracks.forEach(track => {
+                if (track.boneName === previousName) track.boneName = bone.name;
+            });
             onChange();
             render();
         });
@@ -90,9 +108,9 @@ export function createBonesPanel({ onAddBone, onRemoveBone, onKeyBone, onChange 
         ['X', 'Y', 'Z'].forEach((axis, index) => {
             addNumber(`Joint position ${axis}`, bone.position[index], value => {
                 bone.position[index] = value;
-                bone.bindPosition[index] = value;
+                if (!mesh.animationClip) bone.bindPosition[index] = value;
                 onChange();
-            });
+            }, '0.05', () => bone.position[index]);
         });
 
         ['X', 'Y', 'Z'].forEach((axis, index) => {
@@ -118,8 +136,15 @@ export function createBonesPanel({ onAddBone, onRemoveBone, onKeyBone, onChange 
                 onHistory();
                 const next = Number(slider.value);
                 bone.rotation[index] = next * Math.PI / 180;
+                if (!mesh.animationClip) bone.bindRotation[index] = bone.rotation[index];
                 valueLabel.textContent = `${next} deg (${Math.round(Math.abs(next) / 180 * 100)}%)`;
                 onChange();
+            });
+            syncPoseControls.push(() => {
+                if (document.activeElement === slider) return;
+                const currentDegrees = Math.round(bone.rotation[index] * 180 / Math.PI);
+                slider.value = String(currentDegrees);
+                valueLabel.textContent = `${currentDegrees} deg (${Math.round(Math.abs(currentDegrees) / 180 * 100)}%)`;
             });
             group.append(labelRow, slider);
             panel.appendChild(group);
@@ -161,42 +186,20 @@ export function createBonesPanel({ onAddBone, onRemoveBone, onKeyBone, onChange 
         deleteBone.addEventListener('click', () => onRemoveBone(mesh.selectedBone));
         panel.appendChild(deleteBone);
 
-        const keyGroup = document.createElement('div');
-        keyGroup.className = 'field-group bone-slider-group';
-        const keyLabel = document.createElement('div');
-        keyLabel.className = 'bone-slider-label';
-        const keyTitle = document.createElement('span');
-        keyTitle.className = 'field-label';
-        keyTitle.textContent = 'Key current rotation';
-        const keyValue = document.createElement('output');
-        keyLabel.append(keyTitle, keyValue);
-        const keySlider = document.createElement('input');
-        keySlider.className = 'editor-input';
-        keySlider.type = 'range';
-        keySlider.min = '0';
-        keySlider.max = '1.99';
-        keySlider.step = '0.01';
-        keySlider.value = String(keyTime);
-        const updateKeyValue = () => {
-            keyTime = Number(keySlider.value);
-            keyValue.textContent = `${keyTime.toFixed(2)} s (${Math.round(keyTime / 2 * 100)}%)`;
-        };
-        updateKeyValue();
-        keySlider.addEventListener('input', updateKeyValue);
-        const addKey = document.createElement('button');
-        addKey.className = 'editor-button';
-        addKey.type = 'button';
-        addKey.textContent = 'Set rotation key';
-        addKey.addEventListener('click', () => onKeyBone(mesh.selectedBone, keyTime));
-        keyGroup.append(keyLabel, keySlider, addKey);
-        panel.appendChild(keyGroup);
+        ['X', 'Y', 'Z'].forEach((axis, index) => {
+            addNumber(`Bone scale ${axis}`, bone.scale[index], value => {
+                bone.scale[index] = value;
+                if (!mesh.animationClip) bone.bindScale[index] = value;
+                onChange();
+            }, '0.01', () => bone.scale[index]);
+        });
 
         const selectedVertex = mesh.selectedVertex;
         const weightGroup = document.createElement('div');
         weightGroup.className = 'bone-weight-group';
         const weightTitle = document.createElement('div');
         weightTitle.className = 'panel-title';
-        weightTitle.textContent = 'Selected vertex weight';
+        weightTitle.textContent = 'Vertex skinning';
         weightGroup.appendChild(weightTitle);
         const weightLabel = document.createElement('div');
         weightLabel.className = 'inspector-empty field-group';
@@ -264,16 +267,165 @@ export function createBonesPanel({ onAddBone, onRemoveBone, onKeyBone, onChange 
             render();
         });
         weightGroup.append(assign, assignFace, autoWeight, clear);
-        panel.appendChild(weightGroup);
+        const skinningDisclosure = document.createElement('details');
+        skinningDisclosure.className = 'panel-disclosure skinning-disclosure';
+        const skinningSummary = document.createElement('summary');
+        skinningSummary.textContent = 'Vertex skinning weights';
+        skinningDisclosure.append(skinningSummary, weightGroup);
+        panel.appendChild(skinningDisclosure);
+    }
+
+    function renderAnimationEditor() {
+        const section = document.createElement('section');
+        section.className = 'animation-editor';
+        const heading = document.createElement('div');
+        heading.className = 'panel-title';
+        heading.textContent = 'Animation Clip';
+        section.appendChild(heading);
+
+        const clip = mesh.animationClip;
+        if (!clip) {
+            const create = document.createElement('button');
+            create.className = 'editor-button';
+            create.type = 'button';
+            create.textContent = 'Create animation';
+            create.addEventListener('click', onCreateAnimation);
+            section.appendChild(create);
+            panel.appendChild(section);
+            return;
+        }
+
+        const clipFields = document.createElement('div');
+        clipFields.className = 'animation-clip-fields';
+        const name = document.createElement('input');
+        name.className = 'editor-input';
+        name.type = 'text';
+        name.value = clip.name;
+        name.setAttribute('aria-label', 'Animation name');
+        name.addEventListener('change', () => onRenameAnimation(name.value));
+        const duration = document.createElement('input');
+        duration.className = 'editor-input animation-duration';
+        duration.type = 'number';
+        duration.min = '0.1';
+        duration.step = '0.1';
+        duration.value = String(clip.duration);
+        duration.setAttribute('aria-label', 'Animation duration in seconds');
+        duration.addEventListener('change', () => onSetAnimationDuration(Number(duration.value)));
+        const durationLabel = document.createElement('label');
+        durationLabel.className = 'animation-duration-label';
+        durationLabel.append(document.createTextNode('Duration'), duration, document.createTextNode('s'));
+        clipFields.append(name, durationLabel);
+        section.appendChild(clipFields);
+
+        const playback = document.createElement('div');
+        playback.className = 'animation-playback';
+        const initialTime = Math.min(playbackTime ?? currentTime, clip.duration);
+        timelineInput = document.createElement('input');
+        timelineInput.className = 'editor-input animation-timeline';
+        timelineInput.type = 'range';
+        timelineInput.min = '0';
+        timelineInput.max = String(clip.duration);
+        timelineInput.step = '0.01';
+        timelineInput.value = String(initialTime);
+        timelineLabel = document.createElement('output');
+        timelineLabel.className = 'animation-time';
+        timelineLabel.textContent = `${initialTime.toFixed(2)} s`;
+        timelineInput.addEventListener('input', () => {
+            currentTime = Number(timelineInput.value);
+            playbackTime = currentTime;
+            timelineLabel.textContent = `${currentTime.toFixed(2)} s`;
+            onSeekAnimation(currentTime);
+            if (playButton) playButton.textContent = 'Play';
+        });
+        playButton = document.createElement('button');
+        playButton.className = 'editor-button';
+        playButton.type = 'button';
+        playButton.textContent = mesh.animationPlayer.playing ? 'Pause' : 'Play';
+        playButton.addEventListener('click', () => {
+            const playing = onToggleAnimation(Number(timelineInput.value));
+            playButton.textContent = playing ? 'Pause' : 'Play';
+        });
+        playback.append(playButton, timelineInput, timelineLabel);
+        section.appendChild(playback);
+
+        const tracks = document.createElement('div');
+        tracks.className = 'animation-tracks';
+        mesh.skeleton.bones.forEach((bone, index) => {
+            const row = document.createElement('div');
+            row.className = 'animation-track' + (mesh.selectedBone === index ? ' selected' : '');
+            const boneName = document.createElement('span');
+            boneName.className = 'animation-track-name';
+            boneName.textContent = bone.name;
+            const lane = document.createElement('div');
+            lane.className = 'animation-key-lane';
+            const keyTimes = [...new Set(clip.tracks
+                .filter(track => track.boneName === bone.name)
+                .flatMap(track => track.times))].sort((timeA, timeB) => timeA - timeB);
+            keyTimes.forEach(time => {
+                const marker = document.createElement('button');
+                marker.className = 'animation-keyframe';
+                marker.type = 'button';
+                marker.style.left = `${time / clip.duration * 100}%`;
+                marker.title = `${bone.name}, ${time.toFixed(2)} seconds`;
+                marker.setAttribute('aria-label', `Select ${bone.name} keyframe at ${time.toFixed(2)} seconds`);
+                marker.addEventListener('click', () => {
+                    mesh.selectedBone = index;
+                    currentTime = time;
+                    playbackTime = time;
+                    onSeekAnimation(time);
+                    render();
+                });
+                lane.appendChild(marker);
+            });
+            row.append(boneName, lane);
+            tracks.appendChild(row);
+        });
+        if (!mesh.skeleton.bones.length) {
+            const empty = document.createElement('div');
+            empty.className = 'inspector-empty animation-empty';
+            empty.textContent = 'Add bones to create skeletal keyframes.';
+            tracks.appendChild(empty);
+        }
+        section.appendChild(tracks);
+
+        const keyActions = document.createElement('div');
+        keyActions.className = 'animation-key-actions';
+        const keyPose = document.createElement('button');
+        keyPose.className = 'editor-button';
+        keyPose.type = 'button';
+        keyPose.textContent = 'Key selected bone pose';
+        keyPose.disabled = mesh.selectedBone == null;
+        keyPose.addEventListener('click', () => onKeyPose(mesh.selectedBone, Number(timelineInput.value)));
+        const deleteKeys = document.createElement('button');
+        deleteKeys.className = 'editor-button';
+        deleteKeys.type = 'button';
+        deleteKeys.textContent = 'Delete keys at playhead';
+        deleteKeys.disabled = mesh.selectedBone == null;
+        deleteKeys.addEventListener('click', () => onDeleteBoneKeys(mesh.selectedBone, Number(timelineInput.value)));
+        keyActions.append(keyPose, deleteKeys);
+        section.appendChild(keyActions);
+        panel.appendChild(section);
     }
 
     return {
         element: panel,
         setMesh(nextMesh) {
             mesh = nextMesh;
+            currentTime = mesh?.animationPlayer.time || 0;
+            playbackTime = currentTime;
             if (mesh && mesh.selectedBone == null && mesh.skeleton.bones.length) mesh.selectedBone = 0;
             render();
         },
-        refresh: render
+        refresh: render,
+        updatePlayback(time, playing) {
+            playbackTime = time;
+            syncPoseControls.forEach(sync => sync());
+            if (timelineInput && !timelineInput.matches(':active')) {
+                timelineInput.value = String(Math.min(time, Number(timelineInput.max)));
+                currentTime = Number(timelineInput.value);
+                if (timelineLabel) timelineLabel.textContent = `${currentTime.toFixed(2)} s`;
+            }
+            if (playButton) playButton.textContent = playing ? 'Pause' : 'Play';
+        }
     };
 }

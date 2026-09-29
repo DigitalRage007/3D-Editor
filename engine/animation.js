@@ -10,6 +10,7 @@ export class AnimationClip {
     }
 
     addBoneKeyframe(boneName, property, time, value) {
+        time = Math.max(0, Math.min(this.duration, time));
         let track = this.tracks.find(candidate => candidate.boneName === boneName && candidate.property === property);
         if (!track) {
             track = { boneName, property, times: [], values: [] };
@@ -23,6 +24,33 @@ export class AnimationClip {
             track.times.splice(index, 0, time);
             track.values.splice(index, 0, [...value]);
         }
+    }
+
+    removeBoneKeyframes(boneName, time) {
+        let removed = false;
+        this.tracks = this.tracks.filter(track => {
+            if (track.boneName !== boneName) return true;
+            const keyIndex = track.times.findIndex(keyTime => Math.abs(keyTime - time) < 1e-3);
+            if (keyIndex < 0) return true;
+            track.times.splice(keyIndex, 1);
+            track.values.splice(keyIndex, 1);
+            removed = true;
+            return track.times.length > 0;
+        });
+        return removed;
+    }
+
+    setDuration(duration) {
+        this.duration = Math.max(0.1, Number(duration) || 0.1);
+        this.tracks.forEach(track => {
+            const keys = new Map();
+            track.times.forEach((time, index) => {
+                keys.set(Math.min(time, this.duration), track.values[index]);
+            });
+            const sortedKeys = [...keys.entries()].sort(([timeA], [timeB]) => timeA - timeB);
+            track.times = sortedKeys.map(([time]) => time);
+            track.values = sortedKeys.map(([, value]) => value);
+        });
     }
 
     apply(target, time) {
@@ -66,19 +94,26 @@ export class AnimationPlayer {
         this.playing = false;
     }
 
-    play(clip) {
+    play(clip, time = 0) {
         this.clip = clip || this.clip;
-        this.time = 0;
+        this.time = Math.max(0, Math.min(this.clip?.duration || 0, time));
         this.playing = !!this.clip;
+        if (this.playing) this.clip.apply(this.target, this.time);
     }
 
     stop() {
         this.playing = false;
     }
 
+    seek(time) {
+        if (!this.clip) return;
+        this.time = Math.max(0, Math.min(this.clip.duration, Number(time) || 0));
+        this.clip.apply(this.target, this.time);
+    }
+
     update(deltaTime) {
         if (!this.playing || !this.clip) return;
-        this.time += deltaTime;
+        this.time = (this.time + deltaTime) % this.clip.duration;
         this.clip.apply(this.target, this.time);
     }
 }

@@ -4,7 +4,7 @@ import { createAssetsPanel } from './panels/assets.js';
 import { createBonesPanel } from './panels/bones.js';
 
 export function createUI(root, options) {
-    const { scene, onSelect, onSelectFace, onSetPickMode, onAddCube, onAddPlane, onAddSphere, onAddCylinder, onAddBatch, onDuplicate, onAddFace, onExtrudeFace, onMergeFace, onMergeVertices, onAddVertex, onAddBone, onRemoveBone, onKeyBone, onPlayAnimation, onImportMesh, onImportTexture, onDelete, onResetCamera, onExport, onUndo, onRedo, onHistory = () => {} } = options;
+    const { scene, onSelect, onSelectFace, onSetPickMode, onAddCube, onAddPlane, onAddSphere, onAddCylinder, onAddBatch, onDuplicate, onAddFace, onExtrudeFace, onMergeFace, onMergeVertices, onAddVertex, onAddBone, onRemoveBone, onCreateAnimation, onKeyPose, onDeleteBoneKeys, onSeekAnimation, onToggleAnimation, onRenameAnimation, onSetAnimationDuration, onImportMesh, onImportTexture, onDelete, onResetCamera, onExport, onUndo, onRedo, onHistory = () => {} } = options;
     root.style.pointerEvents = 'none';
     root.innerHTML = '';
 
@@ -13,10 +13,14 @@ export function createUI(root, options) {
         #ui-root { color: #e8edf5; font: 13px/1.4 system-ui, sans-serif; }
         .internal-fps { position: fixed; right: 12px; bottom: 12px; z-index: 20; padding: 6px 9px; color: #bfe9d3; background: rgba(13, 23, 20, 0.92); border: 1px solid rgba(115, 190, 150, 0.45); font: 12px/1.3 ui-monospace, monospace; font-variant-numeric: tabular-nums; pointer-events: none; }
         .polygon-counter { position: fixed; right: 12px; bottom: 44px; z-index: 20; max-width: calc(100vw - 24px); padding: 6px 9px; color: #d7e8fa; background: rgba(15, 23, 34, 0.94); border: 1px solid rgba(130, 165, 202, 0.4); font: 12px/1.3 ui-monospace, monospace; font-variant-numeric: tabular-nums; pointer-events: none; }
-        .editor-shell { display: flex; flex-direction: column; gap: 8px; padding: 12px; width: min(100% - 24px, 920px); box-sizing: border-box; pointer-events: none; transform-origin: top left; }
+        .editor-shell { position: fixed; top: 12px; left: 12px; z-index: 10; display: flex; flex-direction: column; gap: 8px; padding: 12px; width: min(calc(100vw - 24px), 920px); height: min(72vh, 680px); min-width: min(320px, calc(100vw - 24px)); min-height: min(180px, calc(100vh - 24px)); max-height: calc(100vh - 24px); box-sizing: border-box; overflow: auto; pointer-events: none; }
         .editor-toolbar { background: rgba(16, 22, 32, 0.92); border: 1px solid rgba(164, 183, 211, 0.2); box-shadow: 0 10px 30px rgba(0,0,0,.25); pointer-events: auto; }
         .editor-toolbar { display: flex; flex-direction: column; gap: 5px; padding: 7px; }
-        .editor-toolbar-head { display: flex; align-items: center; gap: 6px; }
+        .editor-toolbar-head { position: relative; display: flex; align-items: center; gap: 6px; min-height: 26px; }
+        .hud-drag-handle { position: absolute; top: 0; left: 50%; display: flex; align-items: center; justify-content: center; gap: 3px; width: 54px; height: 24px; padding: 0; border: 1px solid #3b526d; background: #101722; cursor: move; pointer-events: auto; touch-action: none; transform: translateX(-50%); }
+        .hud-drag-handle span { width: 3px; height: 3px; border-radius: 50%; background: #9aa9ba; }
+        .hud-resize-handle { position: absolute; right: 1px; bottom: 1px; z-index: 12; width: 22px; height: 22px; padding: 0; border: 0; background: transparent; cursor: nwse-resize; pointer-events: auto; touch-action: none; }
+        .hud-resize-handle::after { position: absolute; right: 3px; bottom: 3px; width: 10px; height: 10px; border-right: 2px solid #9aa9ba; border-bottom: 2px solid #9aa9ba; content: ''; }
         .tool-group { min-width: 0; }
         .tool-group summary { padding: 5px 8px; color: #9ed8ff; background: #101722; border: 1px solid #26384d; cursor: pointer; list-style: none; }
         .tool-group summary::-webkit-details-marker { display: none; }
@@ -63,6 +67,23 @@ export function createUI(root, options) {
         .bone-slider-label output, .bone-weight-group output { color: #ffd071; font-variant-numeric: tabular-nums; }
         .range-value { color: #ffd071; font-size: 11px; font-variant-numeric: tabular-nums; }
         .bone-weight-group { margin-top: 16px; padding-top: 12px; border-top: 1px solid #344657; }
+        .animation-editor { min-width: 0; margin: 12px 0; padding-top: 10px; border-top: 1px solid #344657; }
+        .animation-clip-fields { display: grid; grid-template-columns: minmax(0, 1fr) 106px; gap: 6px; margin-bottom: 8px; }
+        .animation-duration-label { display: grid; grid-template-columns: minmax(0, 1fr) 52px 12px; align-items: center; gap: 4px; color: #9aa9ba; font-size: 10px; text-transform: uppercase; }
+        .animation-playback { display: grid; grid-template-columns: 52px minmax(0, 1fr) 52px; align-items: center; gap: 6px; margin-bottom: 8px; }
+        .animation-timeline { padding: 0; }
+        .animation-time { color: #ffd071; font: 11px/1.3 ui-monospace, monospace; text-align: right; }
+        .animation-tracks { display: grid; gap: 3px; max-height: 112px; overflow: auto; margin: 6px 0 8px; }
+        .animation-track { display: grid; grid-template-columns: minmax(64px, 30%) minmax(0, 1fr); align-items: center; gap: 6px; min-height: 20px; }
+        .animation-track.selected .animation-track-name { color: #ffd071; }
+        .animation-track-name { overflow: hidden; color: #c8d4e2; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+        .animation-key-lane { position: relative; height: 18px; background: #101722; border: 1px solid #26384d; }
+        .animation-keyframe { position: absolute; top: 50%; width: 9px; height: 9px; padding: 0; border: 1px solid #fff0bd; background: #ffd071; cursor: pointer; transform: translate(-50%, -50%) rotate(45deg); }
+        .animation-key-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+        .animation-key-actions .editor-button { flex: 1; }
+        .animation-empty { padding: 8px 0; }
+        .skinning-disclosure { margin-top: 12px; }
+        .skinning-disclosure .bone-weight-group { padding: 8px 0 0; border-top: 0; }
         .bone-weight-group .editor-button { margin: 4px 4px 0 0; }
         .asset-item { padding: 5px 7px; background: #101722; border: 1px solid #26384d; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .uv-workspace { display: none; flex-direction: column; width: 100%; height: min(68vh, 620px); min-height: 360px; box-sizing: border-box; padding: 10px; background: rgba(16, 22, 32, 0.96); border: 1px solid rgba(164, 183, 211, 0.2); pointer-events: auto; }
@@ -115,6 +136,13 @@ export function createUI(root, options) {
     title.className = 'editor-title';
     title.textContent = 'Lightweight 3D';
     toolbarHead.appendChild(title);
+    const dragHandle = document.createElement('button');
+    dragHandle.className = 'hud-drag-handle';
+    dragHandle.type = 'button';
+    dragHandle.title = 'Drag to move HUD';
+    dragHandle.setAttribute('aria-label', 'Move HUD');
+    for (let index = 0; index < 6; index++) dragHandle.appendChild(document.createElement('span'));
+    toolbarHead.appendChild(dragHandle);
     toolbar.appendChild(toolbarHead);
     let activeToolGroup = toolbarHead;
 
@@ -203,7 +231,6 @@ export function createUI(root, options) {
     button('Extrude', onExtrudeFace);
     button('+ Vertex', onAddVertex);
     button('+ Bone', () => onAddBone(null));
-    button('Play', onPlayAnimation);
     button('Delete', onDelete);
 
     group('Selection Mode', true);
@@ -215,8 +242,6 @@ export function createUI(root, options) {
     group('View & Scene');
     button('Center View', onResetCamera);
     button('Export', onExport);
-    button('HUD -', () => setHudScale(Math.max(0.7, Number(container.dataset.hudScale || 1) - 0.1)));
-    button('HUD +', () => setHudScale(Math.min(1.4, Number(container.dataset.hudScale || 1) + 0.1)));
     const uvWorkspace = document.createElement('div');
     uvWorkspace.className = 'uv-workspace';
     const uvTitle = document.createElement('h2');
@@ -537,6 +562,57 @@ export function createUI(root, options) {
     container.appendChild(toolbar);
     container.appendChild(uvWorkspace);
 
+    const resizeHandle = document.createElement('button');
+    resizeHandle.className = 'hud-resize-handle';
+    resizeHandle.type = 'button';
+    resizeHandle.title = 'Drag to resize HUD';
+    resizeHandle.setAttribute('aria-label', 'Resize HUD');
+    container.appendChild(resizeHandle);
+
+    let moveStart = null;
+    dragHandle.addEventListener('pointerdown', event => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        const rect = container.getBoundingClientRect();
+        moveStart = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
+        dragHandle.setPointerCapture(event.pointerId);
+    });
+    dragHandle.addEventListener('pointermove', event => {
+        if (!moveStart || moveStart.pointerId !== event.pointerId) return;
+        const maxLeft = Math.max(0, window.innerWidth - Math.min(120, container.offsetWidth));
+        const maxTop = Math.max(0, window.innerHeight - Math.min(80, container.offsetHeight));
+        container.style.left = `${Math.max(0, Math.min(maxLeft, moveStart.left + event.clientX - moveStart.x))}px`;
+        container.style.top = `${Math.max(0, Math.min(maxTop, moveStart.top + event.clientY - moveStart.y))}px`;
+    });
+    const finishMove = event => {
+        if (moveStart?.pointerId === event.pointerId) moveStart = null;
+    };
+    dragHandle.addEventListener('pointerup', finishMove);
+    dragHandle.addEventListener('pointercancel', finishMove);
+
+    let resizeStart = null;
+    resizeHandle.addEventListener('pointerdown', event => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        const rect = container.getBoundingClientRect();
+        resizeStart = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, width: rect.width, height: rect.height, left: rect.left, top: rect.top };
+        resizeHandle.setPointerCapture(event.pointerId);
+    });
+    resizeHandle.addEventListener('pointermove', event => {
+        if (!resizeStart || resizeStart.pointerId !== event.pointerId) return;
+        const minWidth = Math.min(320, window.innerWidth - 12);
+        const minHeight = Math.min(180, window.innerHeight - 12);
+        const maxWidth = Math.max(minWidth, window.innerWidth - resizeStart.left - 8);
+        const maxHeight = Math.max(minHeight, window.innerHeight - resizeStart.top - 8);
+        container.style.width = `${Math.max(minWidth, Math.min(maxWidth, resizeStart.width + event.clientX - resizeStart.x))}px`;
+        container.style.height = `${Math.max(minHeight, Math.min(maxHeight, resizeStart.height + event.clientY - resizeStart.y))}px`;
+    });
+    const finishResize = event => {
+        if (resizeStart?.pointerId === event.pointerId) resizeStart = null;
+    };
+    resizeHandle.addEventListener('pointerup', finishResize);
+    resizeHandle.addEventListener('pointercancel', finishResize);
+
     const panels = document.createElement('div');
     panels.className = 'editor-panels';
     container.appendChild(panels);
@@ -544,7 +620,7 @@ export function createUI(root, options) {
     const hierarchy = createHierarchyPanel(scene, onSelect);
     const inspector = createInspectorPanel(options.gl, options.textureLibrary, onSelectFace, onHistory);
     const assets = createAssetsPanel(options.textureLibrary, onImportMesh, onImportTexture);
-    const bones = createBonesPanel({ onAddBone, onRemoveBone, onKeyBone, onHistory });
+    const bones = createBonesPanel({ onAddBone, onRemoveBone, onCreateAnimation, onKeyPose, onDeleteBoneKeys, onSeekAnimation, onToggleAnimation, onRenameAnimation, onSetAnimationDuration, onHistory });
 
     const panelDisclosure = (label, element, open = false) => {
         const disclosure = document.createElement('details');
@@ -558,7 +634,7 @@ export function createUI(root, options) {
     panels.appendChild(panelDisclosure('Hierarchy', hierarchy.element));
     panels.appendChild(panelDisclosure('Inspector', inspector.element, true));
     panels.appendChild(panelDisclosure('Assets', assets.element));
-    panels.appendChild(panelDisclosure('Rig and Skinning', bones.element));
+    panels.appendChild(panelDisclosure('Rig and Animation', bones.element));
 
     return {
         setSelected: mesh => { selectedMesh = mesh; inspector.setMesh(mesh); bones.setMesh(mesh); refreshUvTextures(); refreshUvTransformControls(); refreshFaceImageControls(); drawUvWorkspace(); },
@@ -569,6 +645,7 @@ export function createUI(root, options) {
         setPolygonCount: (current, total) => { polygonReadout.textContent = `Current Mesh Polygons / All Polygons: ${current} / ${total}`; },
         refreshTextures: () => { assets.refresh(); inspector.refresh(); refreshUvTextures(); },
         updateUvWorkspace: drawUvWorkspace,
+        updateAnimationWorkspace: (time, playing) => bones.updatePlayback(time, playing),
         setPickMode: mode => {
             onSetPickMode(mode);
             container.classList.toggle('uv-mode', mode === 'mesh');
@@ -576,10 +653,6 @@ export function createUI(root, options) {
         }
     };
 
-    function setHudScale(scale) {
-        container.dataset.hudScale = scale;
-        container.style.transform = `scale(${scale})`;
-    }
 }
 
 function pointInPolygon(point, polygon) {
