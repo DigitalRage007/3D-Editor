@@ -4,7 +4,7 @@ import { createAssetsPanel } from './panels/assets.js';
 import { createBonesPanel } from './panels/bones.js';
 
 export function createUI(root, options) {
-    const { scene, onSelect, onSelectFace, onSetPickMode, onAddCube, onAddPlane, onAddSphere, onAddCylinder, onAddBatch, onDuplicate, onAddFace, onExtrudeFace, onMergeFace, onMergeVertices, onAddVertex, onAddBone, onRemoveBone, onKeyBone, onPlayAnimation, onImportMesh, onImportTexture, onDelete, onResetCamera, onExport } = options;
+    const { scene, onSelect, onSelectFace, onSetPickMode, onAddCube, onAddPlane, onAddSphere, onAddCylinder, onAddBatch, onDuplicate, onAddFace, onExtrudeFace, onMergeFace, onMergeVertices, onAddVertex, onAddBone, onRemoveBone, onKeyBone, onPlayAnimation, onImportMesh, onImportTexture, onDelete, onResetCamera, onExport, onUndo, onRedo, onHistory = () => {} } = options;
     root.style.pointerEvents = 'none';
     root.innerHTML = '';
 
@@ -88,6 +88,17 @@ export function createUI(root, options) {
     polygonReadout.textContent = 'Current Mesh Polygons / All Polygons: 0 / 0';
     root.appendChild(polygonReadout);
     window.addEventListener('keydown', event => {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+            event.preventDefault();
+            if (event.shiftKey) onRedo();
+            else onUndo();
+            return;
+        }
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') {
+            event.preventDefault();
+            onRedo();
+            return;
+        }
         if (event.key.toLowerCase() !== 'f' || ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
         root.style.display = root.style.display === 'none' ? '' : 'none';
     });
@@ -219,6 +230,7 @@ export function createUI(root, options) {
     uvImageRow.appendChild(uvImageSelect);
     uvImageSelect.addEventListener('change', () => {
         if (!selectedMesh) return;
+        onHistory();
         const asset = options.textureLibrary.get(uvImageSelect.value);
         selectedMesh.textureAssetId = asset?.id || null;
         selectedMesh.material.texture = asset?.texture || null;
@@ -266,6 +278,7 @@ export function createUI(root, options) {
             if (!selectedMesh) return;
             const dimensions = selectedMesh.getFaceDimensions(selectedMesh.selectedFace);
             if (!dimensions) return;
+            onHistory();
             const oldSize = axis === 0 ? dimensions.width : dimensions.length;
             const nextSize = Math.max(0.01, Number(input.value) || oldSize);
             selectedMesh.scaleFaceGeometry(selectedMesh.selectedFace, axis === 0 ? nextSize / oldSize : 1, axis === 1 ? nextSize / oldSize : 1);
@@ -285,6 +298,7 @@ export function createUI(root, options) {
         action.textContent = label;
         action.addEventListener('click', () => {
             if (!selectedMesh) return;
+            onHistory();
             selectedMesh.rotateFaceGeometry(selectedMesh.selectedFace, rotation);
             selectedMesh.scaleFaceGeometry(selectedMesh.selectedFace, scaleX, scaleY);
             drawUvWorkspace();
@@ -326,6 +340,7 @@ export function createUI(root, options) {
         mirror.textContent = label;
         mirror.addEventListener('click', () => {
             if (!selectedMesh) return;
+            onHistory();
             const transform = selectedMesh.faceUvTransforms[selectedMesh.selectedFace];
             const property = axis === 0 ? 'flipX' : 'flipY';
             transform[property] = !transform[property];
@@ -357,6 +372,7 @@ export function createUI(root, options) {
     imageTransformRow.appendChild(mergeVerticesButton);
     imageRotation.addEventListener('input', () => {
         if (!selectedMesh) return;
+        onHistory();
         const nextRotation = Number(imageRotation.value);
         imageRotationValue.textContent = `${nextRotation} deg (${Math.round(Math.abs(nextRotation) / 180 * 100)}%)`;
         selectedMesh.faceUvTransforms[selectedMesh.selectedFace].rotation += (nextRotation - previousImageRotation) * Math.PI / 180;
@@ -378,6 +394,7 @@ export function createUI(root, options) {
     }
     uvRotation.addEventListener('input', () => {
         if (!selectedMesh) return;
+        onHistory();
         const nextRotation = Number(uvRotation.value);
         uvRotationValue.textContent = `${nextRotation} deg (${Math.round(Math.abs(nextRotation) / 180 * 100)}%)`;
         selectedMesh.rotateFaceGeometry(selectedMesh.selectedFace, (nextRotation - previousUvRotation) * Math.PI / 180);
@@ -483,6 +500,7 @@ export function createUI(root, options) {
         if (faceIndex < 0) return;
         selectedMesh.selectedFace = faceIndex;
         onSelectFace(faceIndex);
+        onHistory();
         refreshUvTransformControls();
         refreshFaceImageControls();
         uvDrag = { faceIndex, x: event.clientX, y: event.clientY };
@@ -524,9 +542,9 @@ export function createUI(root, options) {
     container.appendChild(panels);
 
     const hierarchy = createHierarchyPanel(scene, onSelect);
-    const inspector = createInspectorPanel(options.gl, options.textureLibrary, onSelectFace);
+    const inspector = createInspectorPanel(options.gl, options.textureLibrary, onSelectFace, onHistory);
     const assets = createAssetsPanel(options.textureLibrary, onImportMesh, onImportTexture);
-    const bones = createBonesPanel({ onAddBone, onRemoveBone, onKeyBone });
+    const bones = createBonesPanel({ onAddBone, onRemoveBone, onKeyBone, onHistory });
 
     const panelDisclosure = (label, element, open = false) => {
         const disclosure = document.createElement('details');

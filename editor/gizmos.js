@@ -24,7 +24,7 @@ export class Gizmos {
 
     bindEvents() {
         window.addEventListener('keydown', event => {
-            if (isTextInput(document.activeElement)) return;
+            if (event.ctrlKey || event.metaKey || event.altKey || isTextInput(document.activeElement)) return;
             const axis = event.key.toLowerCase();
             if (['x', 'y', 'z'].includes(axis)) this.axisConstraint = axis;
         });
@@ -40,6 +40,7 @@ export class Gizmos {
             this.lastY = event.clientY;
             this.moved = false;
             this.activePick = event.button === 0 && !event.shiftKey ? this.pick(event.clientX, event.clientY) : null;
+            this.historySnapshot = this.activePick && this.pickMode !== 'orbit' ? this.callbacks.onHistoryStart?.() : null;
             this.canvas.setPointerCapture(event.pointerId);
         });
         this.canvas.addEventListener('pointermove', event => {
@@ -62,6 +63,8 @@ export class Gizmos {
             this.dragging = false;
             this.canvas.releasePointerCapture(event.pointerId);
             if (!this.moved && this.activeButton === 0 && !event.shiftKey) this.pick(event.clientX, event.clientY);
+            if (this.historySnapshot) this.callbacks.onHistoryEnd?.(this.historySnapshot);
+            this.historySnapshot = null;
             this.activePick = null;
         });
         this.canvas.addEventListener('wheel', event => {

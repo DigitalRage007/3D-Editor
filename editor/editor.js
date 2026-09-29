@@ -11,6 +11,9 @@ export class Editor {
         this.camera = camera;
         this.renderer = renderer;
         this.textureLibrary = new TextureLibrary(renderer.gl);
+        this.undoStack = [];
+        this.redoStack = [];
+        this.maxHistoryLength = 100;
 
         this.uiRoot = document.getElementById('ui-root');
         this.ui = createUI(this.uiRoot, {
@@ -39,7 +42,10 @@ export class Editor {
             onImportTexture: file => this.importTexture(file),
             onDelete: () => this.deleteSelected(),
             onResetCamera: () => this.resetCamera(),
-            onExport: () => this.exportScene()
+            onExport: () => this.exportScene(),
+            onUndo: () => this.undo(),
+            onRedo: () => this.redo(),
+            onHistory: () => this.recordHistory()
         });
         this.gizmos = new Gizmos(scene, camera, renderer.canvas, {
             onPickFace: (mesh, faceIndex) => {
@@ -52,7 +58,9 @@ export class Editor {
                 this.selectFace(faceIndex);
                 mesh.selectedVertex = { faceIndex, vertexIndex };
                 this.ui.setSelected(mesh);
-            }
+            },
+            onHistoryStart: () => this.snapshotScene(),
+            onHistoryEnd: snapshot => this.recordHistorySnapshot(snapshot)
         });
 
         this.selected = null;
@@ -87,18 +95,21 @@ export class Editor {
 
     addFace() {
         if (!this.selected) return;
+        this.recordHistory();
         this.selected.addFace([[0, 0, 0], [1, 0, 0], [0, 1, 0]]);
         this.selectFace(this.selected.faceCount - 1);
     }
 
     extrudeFace() {
         if (!this.selected) return;
+        this.recordHistory();
         this.selected.extrudeFace(Math.max(0, this.selected.selectedFace));
         this.selectFace(this.selected.selectedFace);
     }
 
     mergeSelectedFace() {
         if (!this.selected) return;
+        this.recordHistory();
         if (this.selected.mergeCoplanarFace(Math.max(0, this.selected.selectedFace))) {
             this.selected.selectedVertex = null;
             this.selectFace(this.selected.selectedFace);
@@ -108,6 +119,7 @@ export class Editor {
     mergeSelectedVertices() {
         const selectedVertex = this.selected?.selectedVertex;
         if (!selectedVertex) return;
+        this.recordHistory();
         if (this.selected.mergeNearbyVertices(selectedVertex.faceIndex, selectedVertex.vertexIndex)) {
             this.selected.selectedVertex = null;
             this.ui.setSelected(this.selected);
@@ -117,12 +129,14 @@ export class Editor {
     addVertex() {
         if (!this.selected) return;
         const faceIndex = Math.max(0, this.selected.selectedFace);
+        this.recordHistory();
         this.selected.addVertex(faceIndex, [0, 0, 0]);
         this.ui.setSelected(this.selected);
     }
 
     addBone(parentIndex = null) {
         if (!this.selected) return;
+        this.recordHistory();
         const parent = Number.isInteger(parentIndex) ? this.selected.skeleton.bones[parentIndex] : null;
         const bone = this.selected.skeleton.addBone(undefined, parent);
         this.selected.selectedBone = this.selected.skeleton.bones.indexOf(bone);
@@ -130,13 +144,16 @@ export class Editor {
     }
 
     removeBone(index) {
-        if (!this.selected || !this.selected.removeBone(index)) return;
+        if (!this.selected) return;
+        this.recordHistory();
+        if (!this.selected.removeBone(index)) return;
         this.ui.refreshBones();
     }
 
     keyBonePose(index, time) {
         const bone = this.selected?.skeleton.bones[index];
         if (!bone) return;
+        this.recordHistory();
         if (!this.selected.animationClip) this.selected.animationClip = new AnimationClip('Rig Animation', 2);
         this.selected.animationClip.addBoneKeyframe(bone.name, 'rotation', time, bone.rotation);
     }
@@ -144,6 +161,7 @@ export class Editor {
     playAnimation() {
         if (!this.selected) return;
         if (!this.selected.animationClip) {
+            this.recordHistory();
             const clip = new AnimationClip('Transform Preview', 2);
             clip.addTrack('rotation', [0, 1, 2], [[0, 0, 0], [0, Math.PI, 0], [0, Math.PI * 2, 0]]);
             this.selected.animationClip = clip;
@@ -154,6 +172,7 @@ export class Editor {
 
     async importMesh(file) {
         const data = JSON.parse(await file.text());
+        this.recordHistory();
         if (Array.isArray(data.meshes)) {
             await this.importSceneData(data);
             return;
@@ -279,6 +298,7 @@ export class Editor {
     addPrimitive(type) {
         const mesh = this.createPrimitive(type);
         if (!mesh) return;
+        this.recordHistory();
         mesh.name = `${type} ${this.scene.meshes.length + 1}`;
         mesh.position = [0, 0.5, 0];
         this.scene.add(mesh);
@@ -302,6 +322,7 @@ export class Editor {
             spacing = 2;
         }
         const amount = Math.max(1, Math.min(100000, Math.floor(count) || 1));
+        this.recordHistory();
         spacing = Math.max(1.05, Math.min(10, Number(spacing) || 2));
         const columns = Math.ceil(Math.sqrt(amount));
         const rows = Math.ceil(amount / columns);
@@ -329,6 +350,7 @@ export class Editor {
     duplicateSelected() {
         const source = this.selected;
         if (!source) return;
+        this.recordHistory();
         const duplicate = new Mesh(new Material({
             color: [...source.material.color],
             useTexture: source.material.useTexture,
@@ -378,6 +400,7 @@ export class Editor {
 
     deleteSelected() {
         if (!this.selected) return;
+        this.recordHistory();
         this.scene.remove(this.selected);
         this.select(this.scene.meshes[this.scene.meshes.length - 1] || null);
     }
@@ -386,6 +409,90 @@ export class Editor {
         this.camera.position = [0, 1.5, 4];
         this.camera.target = [0, 0.5, 0];
         this.gizmos.syncFromCamera();
+    }
+
+    snapshotScene() {
+        const snapshot = {
+            selectedIndex: this.scene.meshes.indexOf(this.selected),
+            meshes: this.scene.meshes.map(mesh => ({
+                name: mesh.name,
+                position: mesh.position,
+                rotation: mesh.rotation,
+                scale: mesh.scale,
+                color: mesh.material.color,
+                polygons: mesh.polygons,
+                faceColors: mesh.faceColors,
+                textureAssetId: mesh.textureAssetId,
+                faceTextureIds: mesh.faceTextureIds,
+                faceUvs: mesh.faceUvs,
+                faceUvTransforms: mesh.faceUvTransforms,
+                selectedFace: mesh.selectedFace,
+                selectedVertex: mesh.selectedVertex,
+                selectedBone: mesh.selectedBone,
+                vertexWeights: mesh.getVertexWeightData(),
+                animation: mesh.animationClip ? {
+                    name: mesh.animationClip.name,
+                    duration: mesh.animationClip.duration,
+                    tracks: mesh.animationClip.tracks.map(track => ({
+                        boneName: track.boneName || null,
+                        property: track.property,
+                        times: track.times,
+                        values: track.values
+                    }))
+                } : null,
+                bones: mesh.skeleton.bones.map(bone => ({
+                    name: bone.name,
+                    parent: bone.parent?.name || null,
+                    position: bone.position,
+                    rotation: bone.rotation,
+                    scale: bone.scale,
+                    length: bone.length,
+                    bindPosition: bone.bindPosition,
+                    bindRotation: bone.bindRotation
+                }))
+            }))
+        };
+        return JSON.parse(JSON.stringify(snapshot));
+    }
+
+    recordHistorySnapshot(snapshot) {
+        if (!snapshot || JSON.stringify(snapshot) === JSON.stringify(this.snapshotScene())) return;
+        this.undoStack.push(snapshot);
+        if (this.undoStack.length > this.maxHistoryLength) this.undoStack.shift();
+        this.redoStack.length = 0;
+    }
+
+    recordHistory() {
+        this.undoStack.push(this.snapshotScene());
+        if (this.undoStack.length > this.maxHistoryLength) this.undoStack.shift();
+        this.redoStack.length = 0;
+    }
+
+    async restoreHistorySnapshot(snapshot) {
+        this.scene.meshes.length = 0;
+        await this.importSceneData(snapshot);
+        snapshot.meshes.forEach((meshData, index) => {
+            const mesh = this.scene.meshes[index];
+            if (!mesh) return;
+            mesh.selectedFace = meshData.selectedFace ?? 0;
+            mesh.selectedVertex = meshData.selectedVertex || null;
+            mesh.selectedBone = meshData.selectedBone ?? null;
+        });
+        this.select(this.scene.meshes[snapshot.selectedIndex] || null);
+    }
+
+    async undo() {
+        const snapshot = this.undoStack.pop();
+        if (!snapshot) return;
+        this.redoStack.push(this.snapshotScene());
+        await this.restoreHistorySnapshot(snapshot);
+    }
+
+    async redo() {
+        const snapshot = this.redoStack.pop();
+        if (!snapshot) return;
+        this.undoStack.push(this.snapshotScene());
+        await this.restoreHistorySnapshot(snapshot);
     }
 
     async exportScene() {

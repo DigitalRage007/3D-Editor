@@ -1,6 +1,6 @@
 const faceNames = ['Front', 'Back', 'Left', 'Right', 'Top', 'Bottom'];
 
-export function createInspectorPanel(gl, textureLibrary, onSelectFace) {
+export function createInspectorPanel(gl, textureLibrary, onSelectFace, onHistory = () => {}) {
     const panel = document.createElement('div');
     panel.className = 'editor-panel';
 
@@ -26,7 +26,7 @@ export function createInspectorPanel(gl, textureLibrary, onSelectFace) {
         input.type = 'number';
         input.step = step;
         input.value = value;
-        input.addEventListener('input', () => onInput(Number(input.value) || 0));
+        input.addEventListener('input', () => { onHistory(); onInput(Number(input.value) || 0); });
         group.appendChild(input);
         return group;
     }
@@ -47,6 +47,7 @@ export function createInspectorPanel(gl, textureLibrary, onSelectFace) {
             input.step = '0.1';
             input.value = degrees ? (value * 180 / Math.PI).toFixed(1) : value;
             input.addEventListener('input', () => {
+                onHistory();
                 const nextValue = Number(input.value) || 0;
                 onInput(index, degrees ? nextValue * Math.PI / 180 : nextValue);
             });
@@ -166,6 +167,7 @@ export function createInspectorPanel(gl, textureLibrary, onSelectFace) {
                 input.step = '0.05';
                 input.value = value;
                 input.addEventListener('input', () => {
+                    onHistory();
                     const vertex = [...currentMesh.polygons[currentFace][vertexIndex]];
                     vertex[axis] = Number(input.value) || 0;
                     currentMesh.setFaceVertex(currentFace, vertexIndex, vertex);
@@ -179,7 +181,7 @@ export function createInspectorPanel(gl, textureLibrary, onSelectFace) {
         const name = document.createElement('input');
         name.className = 'editor-input field-group';
         name.value = currentMesh.name;
-        name.addEventListener('input', () => { currentMesh.name = name.value || 'Mesh'; });
+        name.addEventListener('input', () => { onHistory(); currentMesh.name = name.value || 'Mesh'; });
         info.appendChild(name);
         addVectorField('Position', currentMesh.position, (index, value) => { currentMesh.position[index] = value; });
         addVectorField('Rotation', currentMesh.rotation, (index, value) => { currentMesh.rotation[index] = value; }, true);
@@ -199,6 +201,7 @@ export function createInspectorPanel(gl, textureLibrary, onSelectFace) {
         const faceColor = currentMesh.faceColors[currentFace];
         color.value = '#' + faceColor.slice(0, 3).map(value => Math.round(value * 255).toString(16).padStart(2, '0')).join('');
         color.addEventListener('input', () => {
+            onHistory();
             const alpha = faceColor[3] ?? 1;
             const rgb = [1, 3, 5].map(offset => parseInt(color.value.slice(offset, offset + 2), 16) / 255);
             faceColor.splice(0, faceColor.length, ...rgb, alpha);
@@ -225,6 +228,7 @@ export function createInspectorPanel(gl, textureLibrary, onSelectFace) {
         opacityValue.className = 'range-value';
         opacityValue.textContent = `${Math.round(Number(opacity.value) * 100)}%`;
         opacity.addEventListener('input', () => {
+            onHistory();
             faceColor[3] = Number(opacity.value);
             currentMesh.updateRenderQueues();
             opacityValue.textContent = `${Math.round(Number(opacity.value) * 100)}%`;
@@ -233,12 +237,14 @@ export function createInspectorPanel(gl, textureLibrary, onSelectFace) {
         info.appendChild(opacityGroup);
 
         info.appendChild(addTextureSelect('Mesh image', currentMesh.textureAssetId, asset => {
+            onHistory();
             currentMesh.textureAssetId = asset?.id || null;
             currentMesh.material.texture = asset?.texture || null;
             currentMesh.material.useTexture = !!asset;
             currentMesh.updateRenderQueues();
         }));
         info.appendChild(addTextureUpload('Add image to library', asset => {
+            onHistory();
             currentMesh.textureAssetId = asset.id;
             currentMesh.material.texture = asset.texture;
             currentMesh.material.useTexture = true;
@@ -246,11 +252,13 @@ export function createInspectorPanel(gl, textureLibrary, onSelectFace) {
         }));
 
         info.appendChild(addTextureSelect('Face image override', currentMesh.faceTextureIds[currentFace], asset => {
+            onHistory();
             currentMesh.faceTextureIds[currentFace] = asset?.id || null;
             currentMesh.faceTextures[currentFace] = asset?.texture || null;
             currentMesh.updateRenderQueues();
         }));
         info.appendChild(addTextureUpload('Add face image', asset => {
+            onHistory();
             currentMesh.faceTextureIds[currentFace] = asset.id;
             currentMesh.faceTextures[currentFace] = asset.texture;
             currentMesh.updateRenderQueues();

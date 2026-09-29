@@ -1,4 +1,4 @@
-export function createBonesPanel({ onAddBone, onRemoveBone, onKeyBone, onChange = () => {} }) {
+export function createBonesPanel({ onAddBone, onRemoveBone, onKeyBone, onChange = () => {}, onHistory = () => {} }) {
     const panel = document.createElement('div');
     panel.className = 'editor-panel bone-panel';
     let mesh = null;
@@ -15,7 +15,7 @@ export function createBonesPanel({ onAddBone, onRemoveBone, onKeyBone, onChange 
         input.type = 'number';
         input.step = step;
         input.value = value;
-        input.addEventListener('change', () => onInput(Number(input.value) || 0));
+        input.addEventListener('change', () => { onHistory(); onInput(Number(input.value) || 0); });
         group.append(caption, input);
         panel.appendChild(group);
     }
@@ -76,6 +76,7 @@ export function createBonesPanel({ onAddBone, onRemoveBone, onKeyBone, onChange 
         name.value = bone.name;
         name.setAttribute('aria-label', 'Bone name');
         name.addEventListener('change', () => {
+            onHistory();
             bone.name = name.value.trim() || bone.name;
             onChange();
             render();
@@ -114,6 +115,7 @@ export function createBonesPanel({ onAddBone, onRemoveBone, onKeyBone, onChange 
             slider.step = '1';
             slider.value = String(degrees);
             slider.addEventListener('input', () => {
+                onHistory();
                 const next = Number(slider.value);
                 bone.rotation[index] = next * Math.PI / 180;
                 valueLabel.textContent = `${next} deg (${Math.round(Math.abs(next) / 180 * 100)}%)`;
@@ -144,6 +146,7 @@ export function createBonesPanel({ onAddBone, onRemoveBone, onKeyBone, onChange 
         };
         updateLength();
         length.addEventListener('input', () => {
+            onHistory();
             bone.length = Number(length.value);
             updateLength();
             onChange();
@@ -221,6 +224,7 @@ export function createBonesPanel({ onAddBone, onRemoveBone, onKeyBone, onChange 
         assign.disabled = !selectedVertex;
         assign.addEventListener('click', () => {
             if (!selectedVertex) return;
+            onHistory();
             mesh.setVertexBoneWeight(selectedVertex.faceIndex, selectedVertex.vertexIndex, bone, Number(weightSlider.value) / 100);
             onChange();
             render();
@@ -230,6 +234,7 @@ export function createBonesPanel({ onAddBone, onRemoveBone, onKeyBone, onChange 
         assignFace.type = 'button';
         assignFace.textContent = 'Weight selected face';
         assignFace.addEventListener('click', () => {
+            onHistory();
             const faceIndex = mesh.selectedFace;
             mesh.polygons[faceIndex]?.forEach((_, vertexIndex) => {
                 mesh.setVertexBoneWeight(faceIndex, vertexIndex, bone, Number(weightSlider.value) / 100);
@@ -242,6 +247,7 @@ export function createBonesPanel({ onAddBone, onRemoveBone, onKeyBone, onChange 
         autoWeight.type = 'button';
         autoWeight.textContent = 'Auto-weight near this bone';
         autoWeight.addEventListener('click', () => {
+            onHistory();
             mesh.autoWeightBone(bone, Math.max(0.05, bone.length));
             onChange();
             render();
@@ -252,6 +258,7 @@ export function createBonesPanel({ onAddBone, onRemoveBone, onKeyBone, onChange 
         clear.textContent = 'Clear vertex weights';
         clear.disabled = !selectedVertex || !skin;
         clear.addEventListener('click', () => {
+            onHistory();
             if (selectedVertex) mesh.clearVertexBoneWeights(selectedVertex.faceIndex, selectedVertex.vertexIndex);
             onChange();
             render();
