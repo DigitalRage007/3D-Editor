@@ -10,7 +10,7 @@ export class Material {
         const uUseTexture = gl.getUniformLocation(program, 'uUseTexture');
         const uTexture = gl.getUniformLocation(program, 'uTexture');
 
-        gl.uniform3fv(uColor, new Float32Array(this.color));
+        gl.uniform4fv(uColor, new Float32Array([this.color[0], this.color[1], this.color[2], this.color[3] ?? 1]));
         gl.uniform1i(uUseTexture, this.useTexture ? 1 : 0);
 
         if (this.useTexture && this.texture) {
