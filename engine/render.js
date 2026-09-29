@@ -1,10 +1,12 @@
-import { loadShaderSource, textureHasTransparency } from './loader.js';
+import { loadShaderSource } from './loader.js';
 
 export class Renderer {
     constructor(canvas) {
         this.canvas = canvas;
         this.gl = canvas.getContext('webgl');
         if (!this.gl) throw new Error('WebGL not supported');
+        this.instancingExtension = this.gl.getExtension('ANGLE_instanced_arrays');
+        this.instanceBuffer = null;
 
         this.resize();
         this.gl.clearColor(0.1, 0.1, 0.15, 1.0);
@@ -46,7 +48,9 @@ export class Renderer {
             uUVTransform: gl.getUniformLocation(prog, 'uUVTransform'),
             uUVRotation: gl.getUniformLocation(prog, 'uUVRotation'),
             uUVCenter: gl.getUniformLocation(prog, 'uUVCenter'),
-            uFaceSelected: gl.getUniformLocation(prog, 'uFaceSelected')
+            uFaceSelected: gl.getUniformLocation(prog, 'uFaceSelected'),
+            uInstanced: gl.getUniformLocation(prog, 'uInstanced'),
+            aInstance: [0, 1, 2, 3].map(index => gl.getAttribLocation(prog, `aInstance${index}`))
         };
         gl.useProgram(this.program);
     }
@@ -75,8 +79,6 @@ export class Renderer {
         gl.clearColor(0.1, 0.1, 0.15, 1.0);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
         gl.enable(gl.DEPTH_TEST);
-        gl.enable(gl.BLEND);
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
         gl.useProgram(this.program);
         const frameId = ++this.frameId;
@@ -87,38 +89,94 @@ export class Renderer {
         gl.uniformMatrix4fv(this.uniforms.uView, false, view);
         gl.uniformMatrix4fv(this.uniforms.uProj, false, proj);
 
-        const opaqueFaces = new Map();
         const transparentFaces = [];
+        const opaqueMeshes = [];
+        const instanceGroups = new Map();
         scene.meshes.forEach(mesh => {
+            if (mesh.opaqueFaceIndices.length) {
+                const key = this.instancingExtension ? mesh.getInstanceBatchKey() : null;
+                if (key) {
+                    if (!instanceGroups.has(key)) instanceGroups.set(key, []);
+                    instanceGroups.get(key).push(mesh);
+                } else opaqueMeshes.push(mesh);
+            }
+            if (!mesh.transparentFaceIndices.length) return;
             const model = mesh.getModelMatrix();
-            mesh.faceRanges.forEach((_, faceIndex) => {
-                const color = mesh.faceColors[faceIndex] || [1, 1, 1, 1];
-                const texture = mesh.faceTextures[faceIndex] || (mesh.material.useTexture ? mesh.material.texture : null);
-                if ((texture && textureHasTransparency(texture)) || (color[3] ?? 1) < 1) {
-                    const polygon = mesh.polygons[faceIndex];
-                    const center = polygon.reduce((sum, vertex) => sum.map((value, axis) => value + vertex[axis] / polygon.length), [0, 0, 0]);
-                    const worldCenter = transformPoint(model, center);
-                    const distance = Math.hypot(...worldCenter.map((value, axis) => value - camera.position[axis]));
-                    transparentFaces.push({ mesh, faceIndex, distance });
-                } else {
-                    if (!opaqueFaces.has(mesh)) opaqueFaces.set(mesh, []);
-                    opaqueFaces.get(mesh).push(faceIndex);
-                }
+            mesh.transparentFaceIndices.forEach(faceIndex => {
+                const polygon = mesh.polygons[faceIndex];
+                const center = polygon.reduce((sum, vertex) => sum.map((value, axis) => value + vertex[axis] / polygon.length), [0, 0, 0]);
+                const worldCenter = transformPoint(model, center);
+                const distance = Math.hypot(...worldCenter.map((value, axis) => value - camera.position[axis]));
+                transparentFaces.push({ mesh, faceIndex, distance });
             });
         });
 
         gl.depthMask(true);
-        for (const [mesh, faceIndices] of opaqueFaces) {
-            mesh.draw(gl, this.program, faceIndices, frameId);
+        for (const meshes of instanceGroups.values()) {
+            if (meshes.length > 1) this.drawInstancedMeshes(meshes, frameId);
+            else opaqueMeshes.push(meshes[0]);
         }
-
-        transparentFaces.sort((a, b) => b.distance - a.distance);
-        gl.depthMask(false);
-        for (const face of transparentFaces) {
-            face.mesh.draw(gl, this.program, [face.faceIndex], frameId);
+        for (const mesh of opaqueMeshes) {
+            mesh.draw(gl, this.program, mesh.opaqueFaceIndices, frameId);
         }
-        gl.depthMask(true);
+        if (transparentFaces.length) {
+            gl.enable(gl.BLEND);
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+            transparentFaces.sort((a, b) => b.distance - a.distance);
+            gl.depthMask(false);
+            for (const face of transparentFaces) {
+                face.mesh.draw(gl, this.program, [face.faceIndex], frameId);
+            }
+            gl.depthMask(true);
+            gl.disable(gl.BLEND);
+        }
         this.drawSkeletons(scene);
+    }
+
+    drawInstancedMeshes(meshes, frameId) {
+        const gl = this.gl;
+        const extension = this.instancingExtension;
+        const template = meshes[0];
+        template.initBuffers(gl, this.program);
+        if (gl.createVertexArray) gl.bindVertexArray(template.vao);
+        else template.vaoExtension.bindVertexArrayOES(template.vao);
+
+        if (!this.instanceBuffer) this.instanceBuffer = gl.createBuffer();
+        const matrices = new Float32Array(meshes.length * 16);
+        meshes.forEach((mesh, index) => matrices.set(mesh.getModelMatrix(), index * 16));
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.instanceBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, matrices, gl.DYNAMIC_DRAW);
+        this.uniforms.aInstance.forEach((attribute, index) => {
+            gl.enableVertexAttribArray(attribute);
+            gl.vertexAttribPointer(attribute, 4, gl.FLOAT, false, 64, index * 16);
+            extension.vertexAttribDivisorANGLE(attribute, 1);
+        });
+        gl.uniformMatrix4fv(this.uniforms.uModel, false, identityMatrix());
+        gl.uniform1f(this.uniforms.uInstanced, 1);
+
+        if (template.vertexWeights.size && template.skinningFrame !== frameId) {
+            gl.bindBuffer(gl.ARRAY_BUFFER, template.positionBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, template.getDeformedVertices(), gl.DYNAMIC_DRAW);
+            template.skinningFrame = frameId;
+        }
+        const uniforms = template.getUniformLocations(gl, this.program);
+        template.getDrawBatches(template.opaqueFaceIndices).forEach(batch => {
+            gl.uniform4fv(uniforms.uColor, batch.color);
+            gl.uniform1i(uniforms.uUseTexture, 0);
+            gl.uniform1f(uniforms.uFaceSelected, batch.selected ? 1 : 0);
+            gl.uniform4f(uniforms.uUVTransform, batch.transform.scale[0] * (batch.transform.flipX ? -1 : 1), batch.transform.scale[1] * (batch.transform.flipY ? -1 : 1), batch.transform.offset[0], batch.transform.offset[1]);
+            gl.uniform1f(uniforms.uUVRotation, batch.transform.rotation);
+            gl.uniform2f(uniforms.uUVCenter, batch.uvCenter[0], batch.uvCenter[1]);
+            extension.drawElementsInstancedANGLE(gl.TRIANGLES, batch.count, gl.UNSIGNED_SHORT, batch.offset * 2, meshes.length);
+        });
+
+        this.uniforms.aInstance.forEach(attribute => {
+            extension.vertexAttribDivisorANGLE(attribute, 0);
+            gl.disableVertexAttribArray(attribute);
+        });
+        gl.uniform1f(this.uniforms.uInstanced, 0);
+        if (gl.createVertexArray) gl.bindVertexArray(null);
+        else template.vaoExtension.bindVertexArrayOES(null);
     }
 
     drawSkeletons(scene) {
@@ -155,6 +213,7 @@ export class Renderer {
         gl.disableVertexAttribArray(uv);
         gl.vertexAttrib2f(uv, 0, 0);
         gl.uniformMatrix4fv(this.uniforms.uModel, false, identityMatrix());
+        gl.uniform1f(this.uniforms.uInstanced, 0);
         gl.uniform4fv(this.uniforms.uColor, new Float32Array([1, 1, 1, 1]));
         gl.uniform1i(this.uniforms.uUseTexture, 0);
         gl.uniform1f(this.uniforms.uFaceSelected, 0);

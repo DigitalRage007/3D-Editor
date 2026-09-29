@@ -1,6 +1,7 @@
 import { mat4 } from './mat4.js';
 import { Skeleton } from './skeleton.js';
 import { AnimationPlayer } from './animation.js';
+import { textureHasTransparency } from './loader.js';
 
 export class Mesh {
     constructor(material) {
@@ -36,6 +37,13 @@ export class Mesh {
         this.skinningFrame = null;
         this.polygons = [];
         this.faceRanges = [];
+        this.opaqueFaceIndices = [];
+        this.transparentFaceIndices = [];
+        this.allFaceIndices = [];
+        this.renderStateVersion = 0;
+        this.drawBatchCache = new WeakMap();
+        this.geometrySignature = '';
+        this.instanceBatchKey = null;
         this.skeleton = new Skeleton();
         this.animationPlayer = new AnimationPlayer(this);
     }
@@ -227,6 +235,41 @@ export class Mesh {
         if (!normal) return null;
         const bitangent = normalize3(cross3(normal, tangent));
         return { vertices, center, tangent, bitangent, normal };
+    }
+
+    updateRenderQueues() {
+        this.opaqueFaceIndices = [];
+        this.transparentFaceIndices = [];
+        this.renderStateVersion++;
+        for (let faceIndex = 0; faceIndex < this.faceCount; faceIndex++) {
+            const color = this.faceColors[faceIndex] || [1, 1, 1, 1];
+            const texture = this.faceTextures[faceIndex] || (this.material.useTexture ? this.material.texture : null);
+            if ((color[3] ?? 1) < 1 || (texture && textureHasTransparency(texture))) this.transparentFaceIndices.push(faceIndex);
+            else this.opaqueFaceIndices.push(faceIndex);
+        }
+        this.instanceBatchKey = null;
+        if (this.transparentFaceIndices.length || this.vertexWeights.size || this.skeleton.bones.length || this.selectedFace >= 0) return;
+        const batches = this.getDrawBatches(this.opaqueFaceIndices);
+        if (batches.some(batch => batch.texture)) return;
+        this.instanceBatchKey = `${this.geometrySignature}:${JSON.stringify(batches.map(batch => [batch.offset, batch.count, batch.color, batch.transform.scale, batch.transform.offset, batch.transform.rotation, batch.transform.flipX, batch.transform.flipY, batch.uvCenter]))}`;
+    }
+
+    getInstanceBatchKey() {
+        if (this.selectedFace >= 0 || this.vertexWeights.size || this.skeleton.bones.length || this.transparentFaceIndices.length) return null;
+        return this.instanceBatchKey;
+    }
+
+    setFaceColor(faceIndex, color) {
+        if (!this.faceColors[faceIndex]) return;
+        this.faceColors[faceIndex] = [...color];
+        this.updateRenderQueues();
+    }
+
+    setFaceTexture(faceIndex, texture, textureId = null) {
+        if (faceIndex < 0 || faceIndex >= this.faceCount) return;
+        this.faceTextures[faceIndex] = texture || null;
+        this.faceTextureIds[faceIndex] = textureId;
+        this.updateRenderQueues();
     }
 
     setVertexBoneWeight(faceIndex, vertexIndex, bone, weight = 1) {
@@ -479,11 +522,14 @@ export class Mesh {
         this.colors = new Float32Array(colors);
         this.uvs = new Float32Array(uvs);
         this.indices = new Uint16Array(indices);
+        this.geometrySignature = hashGeometry(this.vertices, this.indices);
         this.faceCount = this.polygons.length;
+        this.allFaceIndices = Array.from({ length: this.faceCount }, (_, faceIndex) => faceIndex);
         while (this.faceColors.length < this.faceCount) this.faceColors.push([1, 1, 1, 1]);
         while (this.faceTextures.length < this.faceCount) this.faceTextures.push(null);
         while (this.faceTextureIds.length < this.faceCount) this.faceTextureIds.push(null);
         while (this.faceUvTransforms.length < this.faceCount) this.faceUvTransforms.push({ scale: [1, 1], offset: [0, 0], rotation: 0, flipX: false, flipY: false });
+        this.updateRenderQueues();
         if (this.vao) this.invalidateBuffers();
     }
 
@@ -580,6 +626,7 @@ export class Mesh {
 
         const uniforms = this.getUniformLocations(gl, program);
         gl.uniformMatrix4fv(uniforms.uModel, false, this.getModelMatrix());
+        gl.uniform1f(uniforms.uInstanced, 0);
         if (this.vertexWeights.size) {
             if (frameToken === undefined || this.skinningFrame !== frameToken) {
                 gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
@@ -587,7 +634,7 @@ export class Mesh {
                 this.skinningFrame = frameToken;
             }
         }
-        const facesToDraw = faceIndices || this.faceRanges.map((_, faceIndex) => faceIndex);
+        const batches = this.getDrawBatches(faceIndices || this.allFaceIndices);
         let batchOffset = 0;
         let batchCount = 0;
         let batchColor = null;
@@ -613,8 +660,32 @@ export class Mesh {
             }
             gl.drawElements(gl.TRIANGLES, batchCount, gl.UNSIGNED_SHORT, batchOffset * 2);
         };
-        for (const faceIndex of facesToDraw) {
-            const color = this.faceColors[faceIndex] || [...this.material.color, 1];
+        for (const batch of batches) {
+            batchOffset = batch.offset;
+            batchCount = batch.count;
+            batchColor = batch.color;
+            batchTexture = batch.texture;
+            batchTransform = batch.transform;
+            batchUvCenter = batch.uvCenter;
+            batchSelected = batch.selected;
+            batchUvCenterRelevant = batch.uvCenterRelevant;
+            flushBatch();
+        }
+
+        if (gl.createVertexArray) {
+            gl.bindVertexArray(null);
+        } else {
+            this.vaoExtension.bindVertexArrayOES(null);
+        }
+    }
+
+    getDrawBatches(faceIndices) {
+        const cached = this.drawBatchCache.get(faceIndices);
+        if (cached && cached.version === this.renderStateVersion && cached.selectedFace === this.selectedFace) return cached.batches;
+        const batches = [];
+        let current = null;
+        for (const faceIndex of faceIndices) {
+            const color = this.faceColors[faceIndex] || this.material.color;
             const texture = this.faceTextures[faceIndex] || (this.material.useTexture ? this.material.texture : null);
             const transform = this.faceUvTransforms[faceIndex];
             const uvCenterRelevant = transform.rotation !== 0 || transform.scale[0] !== 1 || transform.scale[1] !== 1 || transform.flipX || transform.flipY;
@@ -624,47 +695,25 @@ export class Mesh {
                 if (faceUvs.length) {
                     let centerU = 0;
                     let centerV = 0;
-                    const weight = 1 / faceUvs.length;
                     for (let uvIndex = 0; uvIndex < faceUvs.length; uvIndex++) {
-                        centerU += faceUvs[uvIndex][0] * weight;
-                        centerV += faceUvs[uvIndex][1] * weight;
+                        centerU += faceUvs[uvIndex][0];
+                        centerV += faceUvs[uvIndex][1];
                     }
-                    uvCenter = [centerU, centerV];
+                    uvCenter = [centerU / faceUvs.length, centerV / faceUvs.length];
                 }
             }
             const range = this.faceRanges[faceIndex];
             const selected = this.selectedFace === faceIndex;
-            const sameState = batchCount
-                && batchOffset + batchCount === range.offset
-                && batchTexture === texture
-                && batchSelected === selected
-                && batchColor[0] === color[0] && batchColor[1] === color[1] && batchColor[2] === color[2] && batchColor[3] === (color[3] ?? 1)
-                && batchTransform.rotation === transform.rotation
-                && batchTransform.flipX === transform.flipX && batchTransform.flipY === transform.flipY
-                && batchTransform.scale[0] === transform.scale[0] && batchTransform.scale[1] === transform.scale[1]
-                && batchTransform.offset[0] === transform.offset[0] && batchTransform.offset[1] === transform.offset[1]
-                && batchUvCenterRelevant === uvCenterRelevant
-                && (!uvCenterRelevant || (batchUvCenter[0] === uvCenter[0] && batchUvCenter[1] === uvCenter[1]));
-            if (sameState) batchCount += range.count;
-            else {
-                flushBatch();
-                batchOffset = range.offset;
-                batchCount = range.count;
-                batchColor = [color[0], color[1], color[2], color[3] ?? 1];
-                batchTexture = texture;
-                batchTransform = transform;
-                batchUvCenter = uvCenter;
-                batchSelected = selected;
-                batchUvCenterRelevant = uvCenterRelevant;
+            const batchColor = [color[0], color[1], color[2], color[3] ?? 1];
+            if (current && current.offset + current.count === range.offset && sameFaceState(current, texture, batchColor, transform, uvCenter, uvCenterRelevant, selected)) {
+                current.count += range.count;
+            } else {
+                current = { offset: range.offset, count: range.count, color: batchColor, texture, transform, uvCenter, uvCenterRelevant, selected };
+                batches.push(current);
             }
         }
-        flushBatch();
-
-        if (gl.createVertexArray) {
-            gl.bindVertexArray(null);
-        } else {
-            this.vaoExtension.bindVertexArrayOES(null);
-        }
+        this.drawBatchCache.set(faceIndices, { version: this.renderStateVersion, selectedFace: this.selectedFace, batches });
+        return batches;
     }
 
     getUniformLocations(gl, program) {
@@ -678,7 +727,8 @@ export class Mesh {
                 uUVTransform: gl.getUniformLocation(program, 'uUVTransform'),
                 uUVRotation: gl.getUniformLocation(program, 'uUVRotation'),
                 uUVCenter: gl.getUniformLocation(program, 'uUVCenter'),
-                uFaceSelected: gl.getUniformLocation(program, 'uFaceSelected')
+                uFaceSelected: gl.getUniformLocation(program, 'uFaceSelected'),
+                uInstanced: gl.getUniformLocation(program, 'uInstanced')
             };
         }
         return this.uniformLocations;
@@ -696,6 +746,40 @@ export class Mesh {
 }
 
 const DEFAULT_UV_CENTER = [0.5, 0.5];
+
+function hashGeometry(vertices, indices) {
+    let first = 2166136261;
+    let second = 0x9e3779b9;
+    for (let index = 0; index < vertices.length; index++) {
+        const value = Math.round(vertices[index] * 1e6);
+        first = Math.imul(first ^ value, 16777619);
+        second = Math.imul(second ^ (value + index), 2246822519);
+    }
+    for (let index = 0; index < indices.length; index++) {
+        const value = indices[index];
+        first = Math.imul(first ^ value, 16777619);
+        second = Math.imul(second ^ (value + index), 2246822519);
+    }
+    return `${vertices.length}:${indices.length}:${first >>> 0}:${second >>> 0}`;
+}
+
+function sameFaceState(batch, texture, color, transform, uvCenter, uvCenterRelevant, selected) {
+    return batch.texture === texture
+        && batch.selected === selected
+        && batch.color[0] === color[0]
+        && batch.color[1] === color[1]
+        && batch.color[2] === color[2]
+        && batch.color[3] === color[3]
+        && batch.transform.rotation === transform.rotation
+        && batch.transform.flipX === transform.flipX
+        && batch.transform.flipY === transform.flipY
+        && batch.transform.scale[0] === transform.scale[0]
+        && batch.transform.scale[1] === transform.scale[1]
+        && batch.transform.offset[0] === transform.offset[0]
+        && batch.transform.offset[1] === transform.offset[1]
+        && batch.uvCenterRelevant === uvCenterRelevant
+        && (!uvCenterRelevant || (batch.uvCenter[0] === uvCenter[0] && batch.uvCenter[1] === uvCenter[1]));
+}
 
 function defaultFaceUV(faceIndex, vertexIndex, faceCount) {
     const columns = Math.ceil(Math.sqrt(faceCount));

@@ -202,6 +202,7 @@ export function createInspectorPanel(gl, textureLibrary, onSelectFace) {
             const alpha = faceColor[3] ?? 1;
             const rgb = [1, 3, 5].map(offset => parseInt(color.value.slice(offset, offset + 2), 16) / 255);
             faceColor.splice(0, faceColor.length, ...rgb, alpha);
+            currentMesh.updateRenderQueues();
         });
         colorRow.appendChild(color);
         colorGroup.appendChild(colorRow);
@@ -225,6 +226,7 @@ export function createInspectorPanel(gl, textureLibrary, onSelectFace) {
         opacityValue.textContent = `${Math.round(Number(opacity.value) * 100)}%`;
         opacity.addEventListener('input', () => {
             faceColor[3] = Number(opacity.value);
+            currentMesh.updateRenderQueues();
             opacityValue.textContent = `${Math.round(Number(opacity.value) * 100)}%`;
         });
         opacityGroup.append(opacity, opacityValue);
@@ -234,20 +236,24 @@ export function createInspectorPanel(gl, textureLibrary, onSelectFace) {
             currentMesh.textureAssetId = asset?.id || null;
             currentMesh.material.texture = asset?.texture || null;
             currentMesh.material.useTexture = !!asset;
+            currentMesh.updateRenderQueues();
         }));
         info.appendChild(addTextureUpload('Add image to library', asset => {
             currentMesh.textureAssetId = asset.id;
             currentMesh.material.texture = asset.texture;
             currentMesh.material.useTexture = true;
+            currentMesh.updateRenderQueues();
         }));
 
         info.appendChild(addTextureSelect('Face image override', currentMesh.faceTextureIds[currentFace], asset => {
             currentMesh.faceTextureIds[currentFace] = asset?.id || null;
             currentMesh.faceTextures[currentFace] = asset?.texture || null;
+            currentMesh.updateRenderQueues();
         }));
         info.appendChild(addTextureUpload('Add face image', asset => {
             currentMesh.faceTextureIds[currentFace] = asset.id;
             currentMesh.faceTextures[currentFace] = asset.texture;
+            currentMesh.updateRenderQueues();
         }));
 
         const transform = currentMesh.faceUvTransforms[currentFace];

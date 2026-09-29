@@ -213,6 +213,7 @@ export function createUI(root, options) {
         selectedMesh.textureAssetId = asset?.id || null;
         selectedMesh.material.texture = asset?.texture || null;
         selectedMesh.material.useTexture = !!asset;
+        selectedMesh.updateRenderQueues();
         drawUvWorkspace();
     });
     const uvTransformRow = document.createElement('div');
