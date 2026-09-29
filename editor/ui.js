@@ -3,7 +3,7 @@ import { createInspectorPanel } from './panels/inspector.js';
 import { createAssetsPanel } from './panels/assets.js';
 
 export function createUI(root, options) {
-    const { scene, onSelect, onSelectFace, onSetPickMode, onAddCube, onAddFace, onExtrudeFace, onAddVertex, onAddBone, onPlayAnimation, onImportMesh, onImportTexture, onDelete, onResetCamera, onExport } = options;
+    const { scene, onSelect, onSelectFace, onSetPickMode, onAddCube, onAddPlane, onAddSphere, onAddCylinder, onDuplicate, onAddFace, onExtrudeFace, onAddVertex, onAddBone, onPlayAnimation, onImportMesh, onImportTexture, onDelete, onResetCamera, onExport } = options;
     root.style.pointerEvents = 'none';
     root.innerHTML = '';
 
@@ -109,6 +109,10 @@ export function createUI(root, options) {
 
     group('Modeling');
     button('+ Cube', onAddCube);
+    button('+ Plane', onAddPlane);
+    button('+ Sphere', onAddSphere);
+    button('+ Cylinder', onAddCylinder);
+    button('Duplicate', onDuplicate);
     button('+ Face', onAddFace);
     button('Extrude', onExtrudeFace);
     button('+ Vertex', onAddVertex);
@@ -131,7 +135,7 @@ export function createUI(root, options) {
     uvWorkspace.className = 'uv-workspace';
     const uvTitle = document.createElement('h2');
     uvTitle.className = 'uv-workspace-title';
-    uvTitle.textContent = 'Mesh UV Layout';
+    uvTitle.textContent = 'Mesh and UV Editing';
     const uvImageRow = document.createElement('label');
     uvImageRow.className = 'uv-image-row';
     uvImageRow.appendChild(document.createTextNode('Image'));
@@ -152,7 +156,7 @@ export function createUI(root, options) {
     uvRotationGroup.className = 'field-group';
     const uvRotationLabel = document.createElement('span');
     uvRotationLabel.className = 'field-label';
-    uvRotationLabel.textContent = 'Island rotation';
+    uvRotationLabel.textContent = 'Side rotation';
     const uvRotation = document.createElement('input');
     uvRotation.className = 'editor-input';
     uvRotation.type = 'range';
@@ -178,11 +182,11 @@ export function createUI(root, options) {
         input.step = '0.01';
         input.addEventListener('change', () => {
             if (!selectedMesh) return;
-            const bounds = uvBounds(selectedMesh.faceUvs[selectedMesh.selectedFace]);
-            if (!bounds) return;
-            const oldSize = axis === 0 ? bounds.width : bounds.height;
+            const dimensions = selectedMesh.getFaceDimensions(selectedMesh.selectedFace);
+            if (!dimensions) return;
+            const oldSize = axis === 0 ? dimensions.width : dimensions.length;
             const nextSize = Math.max(0.01, Number(input.value) || oldSize);
-            selectedMesh.transformFaceUVs(selectedMesh.selectedFace, 0, axis === 0 ? nextSize / oldSize : 1, axis === 1 ? nextSize / oldSize : 1);
+            selectedMesh.scaleFaceGeometry(selectedMesh.selectedFace, axis === 0 ? nextSize / oldSize : 1, axis === 1 ? nextSize / oldSize : 1);
             drawUvWorkspace();
             refreshUvTransformControls(false);
         });
@@ -190,8 +194,8 @@ export function createUI(root, options) {
         uvTransformRow.appendChild(group);
         return input;
     };
-    const uvWidth = makeUvDimensionControl('Width (U)', 0);
-    const uvLength = makeUvDimensionControl('Length (V)', 1);
+    const uvWidth = makeUvDimensionControl('Side width', 0);
+    const uvLength = makeUvDimensionControl('Side length', 1);
     const uvActionButton = (label, rotation, scaleX, scaleY) => {
         const action = document.createElement('button');
         action.className = 'editor-button';
@@ -199,7 +203,8 @@ export function createUI(root, options) {
         action.textContent = label;
         action.addEventListener('click', () => {
             if (!selectedMesh) return;
-            selectedMesh.transformFaceUVs(selectedMesh.selectedFace, rotation, scaleX, scaleY);
+            selectedMesh.rotateFaceGeometry(selectedMesh.selectedFace, rotation);
+            selectedMesh.scaleFaceGeometry(selectedMesh.selectedFace, scaleX, scaleY);
             drawUvWorkspace();
             refreshUvTransformControls(false);
         });
@@ -207,12 +212,12 @@ export function createUI(root, options) {
     };
     uvActionButton('Rotate -90', -Math.PI / 2, 1, 1);
     uvActionButton('Rotate +90', Math.PI / 2, 1, 1);
-    uvActionButton('Mirror U', 0, -1, 1);
-    uvActionButton('Mirror V', 0, 1, -1);
+    uvActionButton('Widen', 0, 1.25, 1);
+    uvActionButton('Lengthen', 0, 1, 1.25);
     uvRotation.addEventListener('input', () => {
         if (!selectedMesh) return;
         const nextRotation = Number(uvRotation.value);
-        selectedMesh.transformFaceUVs(selectedMesh.selectedFace, (nextRotation - previousUvRotation) * Math.PI / 180);
+        selectedMesh.rotateFaceGeometry(selectedMesh.selectedFace, (nextRotation - previousUvRotation) * Math.PI / 180);
         previousUvRotation = nextRotation;
         drawUvWorkspace();
         refreshUvTransformControls(false);
@@ -220,12 +225,12 @@ export function createUI(root, options) {
     });
 
     function refreshUvTransformControls(resetRotation = true) {
-        const bounds = selectedMesh && uvBounds(selectedMesh.faceUvs[selectedMesh.selectedFace]);
-        uvWidth.value = bounds ? bounds.width.toFixed(2) : '';
-        uvLength.value = bounds ? bounds.height.toFixed(2) : '';
-        uvWidth.disabled = !bounds;
-        uvLength.disabled = !bounds;
-        uvRotation.disabled = !bounds;
+        const dimensions = selectedMesh && selectedMesh.getFaceDimensions(selectedMesh.selectedFace);
+        uvWidth.value = dimensions ? dimensions.width.toFixed(2) : '';
+        uvLength.value = dimensions ? dimensions.length.toFixed(2) : '';
+        uvWidth.disabled = !dimensions;
+        uvLength.disabled = !dimensions;
+        uvRotation.disabled = !dimensions;
         if (resetRotation) {
             previousUvRotation = 0;
             uvRotation.value = '0';
@@ -251,11 +256,7 @@ export function createUI(root, options) {
         const faceTextureId = selectedMesh.faceTextureIds[selectedFace];
         const imageAsset = options.textureLibrary.get(faceTextureId || selectedMesh.textureAssetId);
         if (imageAsset?.previewImage?.complete && imageAsset.previewImage.naturalWidth) {
-            context.save();
-            context.translate(0, uvRegion.y * 2 + uvRegion.height);
-            context.scale(1, -1);
             context.drawImage(imageAsset.previewImage, uvRegion.x, uvRegion.y, uvRegion.width, uvRegion.height);
-            context.restore();
         } else {
             context.fillStyle = '#202b37';
             context.fillRect(uvRegion.x, uvRegion.y, uvRegion.width, uvRegion.height);
@@ -403,15 +404,4 @@ function pointInPolygon(point, polygon) {
         if (intersects) inside = !inside;
     }
     return inside;
-}
-
-function uvBounds(faceUvs) {
-    if (!faceUvs?.length) return null;
-    const uValues = faceUvs.map(([u]) => u);
-    const vValues = faceUvs.map(([, v]) => v);
-    const minU = Math.min(...uValues);
-    const maxU = Math.max(...uValues);
-    const minV = Math.min(...vValues);
-    const maxV = Math.max(...vValues);
-    return { minU, maxU, minV, maxV, width: maxU - minU, height: maxV - minV };
 }

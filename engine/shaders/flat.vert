@@ -18,6 +18,7 @@ void main() {
     float c = cos(uUVRotation);
     float s = sin(uUVRotation);
     uv = mat2(c, -s, s, c) * uv;
-    vUV = uv * uUVTransform.xy + vec2(0.5) + uUVTransform.zw;
+    vec2 mappedUV = uv * uUVTransform.xy + vec2(0.5) + uUVTransform.zw;
+    vUV = vec2(mappedUV.x, 1.0 - mappedUV.y);
     gl_Position = uProj * uView * uModel * vec4(aPosition, 1.0);
 }

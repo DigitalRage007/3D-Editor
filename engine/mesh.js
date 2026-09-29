@@ -56,6 +56,53 @@ export class Mesh {
         return mesh;
     }
 
+    static createPlane(material) {
+        const mesh = new Mesh(material);
+        mesh.polygons = [[[-0.5, 0, -0.5], [-0.5, 0, 0.5], [0.5, 0, 0.5], [0.5, 0, -0.5]]];
+        mesh.rebuildRenderData();
+        return mesh;
+    }
+
+    static createUvSphere(material, segments = 16, rings = 8) {
+        const mesh = new Mesh(material);
+        const point = (ring, segment) => {
+            const latitude = Math.PI * ring / rings;
+            const longitude = 2 * Math.PI * segment / segments;
+            return [0.5 * Math.sin(latitude) * Math.cos(longitude), 0.5 * Math.cos(latitude), 0.5 * Math.sin(latitude) * Math.sin(longitude)];
+        };
+        for (let segment = 0; segment < segments; segment++) {
+            mesh.polygons.push([[0, 0.5, 0], point(1, segment), point(1, segment + 1)]);
+            mesh.polygons.push([[0, -0.5, 0], point(rings - 1, segment + 1), point(rings - 1, segment)]);
+        }
+        for (let ring = 1; ring < rings - 1; ring++) {
+            for (let segment = 0; segment < segments; segment++) {
+                mesh.polygons.push([point(ring, segment), point(ring, segment + 1), point(ring + 1, segment + 1), point(ring + 1, segment)]);
+            }
+        }
+        mesh.rebuildRenderData();
+        return mesh;
+    }
+
+    static createCylinder(material, segments = 16) {
+        const mesh = new Mesh(material);
+        const bottom = [];
+        const top = [];
+        for (let segment = 0; segment < segments; segment++) {
+            const angle = 2 * Math.PI * segment / segments;
+            const x = Math.cos(angle) * 0.5;
+            const z = Math.sin(angle) * 0.5;
+            bottom.push([x, -0.5, z]);
+            top.push([x, 0.5, z]);
+        }
+        mesh.polygons.push([...bottom], [...top].reverse());
+        for (let segment = 0; segment < segments; segment++) {
+            const next = (segment + 1) % segments;
+            mesh.polygons.push([bottom[segment], bottom[next], top[next], top[segment]]);
+        }
+        mesh.rebuildRenderData();
+        return mesh;
+    }
+
     static createFromData(material, data) {
         const mesh = new Mesh(material);
         const vertices = data.vertices || [];
@@ -111,19 +158,67 @@ export class Mesh {
         this.rebuildRenderData();
     }
 
-    transformFaceUVs(faceIndex, rotation = 0, scaleX = 1, scaleY = 1) {
-        const faceUvs = this.faceUvs[faceIndex];
-        if (!faceUvs?.length) return;
-        const center = faceUvs.reduce((sum, uv) => [sum[0] + uv[0] / faceUvs.length, sum[1] + uv[1] / faceUvs.length], [0, 0]);
-        const cosine = Math.cos(rotation);
-        const sine = Math.sin(rotation);
-        faceUvs.forEach(uv => {
-            const x = (uv[0] - center[0]) * scaleX;
-            const y = (uv[1] - center[1]) * scaleY;
-            uv[0] = center[0] + x * cosine - y * sine;
-            uv[1] = center[1] + x * sine + y * cosine;
+    getFaceDimensions(faceIndex) {
+        const frame = this.getFaceFrame(faceIndex);
+        if (!frame) return null;
+        const projections = frame.vertices.map(vertex => {
+            const relative = vertex.map((value, axis) => value - frame.center[axis]);
+            return [dot3(relative, frame.tangent), dot3(relative, frame.bitangent)];
+        });
+        return {
+            width: Math.max(...projections.map(point => point[0])) - Math.min(...projections.map(point => point[0])),
+            length: Math.max(...projections.map(point => point[1])) - Math.min(...projections.map(point => point[1]))
+        };
+    }
+
+    rotateFaceGeometry(faceIndex, angle) {
+        const frame = this.getFaceFrame(faceIndex);
+        if (!frame) return;
+        const cosine = Math.cos(angle);
+        const sine = Math.sin(angle);
+        frame.vertices.forEach(vertex => {
+            const relative = vertex.map((value, axis) => value - frame.center[axis]);
+            const x = dot3(relative, frame.tangent);
+            const y = dot3(relative, frame.bitangent);
+            const rotated = frame.center.map((value, axis) => value
+                + frame.tangent[axis] * (x * cosine - y * sine)
+                + frame.bitangent[axis] * (x * sine + y * cosine));
+            vertex.splice(0, 3, ...rotated);
         });
         this.rebuildRenderData();
+    }
+
+    scaleFaceGeometry(faceIndex, widthScale = 1, lengthScale = 1) {
+        const frame = this.getFaceFrame(faceIndex);
+        if (!frame) return;
+        frame.vertices.forEach(vertex => {
+            const relative = vertex.map((value, axis) => value - frame.center[axis]);
+            const x = dot3(relative, frame.tangent) * widthScale;
+            const y = dot3(relative, frame.bitangent) * lengthScale;
+            const normalOffset = dot3(relative, frame.normal);
+            const scaled = frame.center.map((value, axis) => value
+                + frame.tangent[axis] * x
+                + frame.bitangent[axis] * y
+                + frame.normal[axis] * normalOffset);
+            vertex.splice(0, 3, ...scaled);
+        });
+        this.rebuildRenderData();
+    }
+
+    getFaceFrame(faceIndex) {
+        const vertices = this.polygons[faceIndex];
+        if (!vertices || vertices.length < 3) return null;
+        const center = vertices.reduce((sum, vertex) => sum.map((value, axis) => value + vertex[axis] / vertices.length), [0, 0, 0]);
+        let tangent = normalize3(vertices[1].map((value, axis) => value - vertices[0][axis]));
+        if (!tangent) return null;
+        let normal = null;
+        for (let index = 2; index < vertices.length && !normal; index++) {
+            const edge = vertices[index].map((value, axis) => value - vertices[0][axis]);
+            normal = normalize3(cross3(tangent, edge));
+        }
+        if (!normal) return null;
+        const bitangent = normalize3(cross3(normal, tangent));
+        return { vertices, center, tangent, bitangent, normal };
     }
 
     setFaceVertex(faceIndex, vertexIndex, position) {
@@ -351,4 +446,17 @@ function defaultFaceUV(faceIndex, vertexIndex, faceCount) {
     const tileY = Math.floor(faceIndex / columns);
     const local = [[0, 0], [1, 0], [1, 1], [0, 1]][vertexIndex % 4];
     return [(tileX + local[0]) / columns, (tileY + local[1]) / rows];
+}
+
+function dot3(a, b) {
+    return a.reduce((sum, value, axis) => sum + value * b[axis], 0);
+}
+
+function cross3(a, b) {
+    return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+}
+
+function normalize3(vector) {
+    const length = Math.hypot(...vector);
+    return length > 1e-10 ? vector.map(value => value / length) : null;
 }

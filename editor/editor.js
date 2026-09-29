@@ -21,6 +21,10 @@ export class Editor {
             onSelectFace: faceIndex => this.selectFace(faceIndex),
             onSetPickMode: mode => this.gizmos.setPickMode(mode),
             onAddCube: () => this.addCube(),
+            onAddPlane: () => this.addPrimitive('Plane'),
+            onAddSphere: () => this.addPrimitive('Sphere'),
+            onAddCylinder: () => this.addPrimitive('Cylinder'),
+            onDuplicate: () => this.duplicateSelected(),
             onAddFace: () => this.addFace(),
             onExtrudeFace: () => this.extrudeFace(),
             onAddVertex: () => this.addVertex(),
@@ -124,11 +128,63 @@ export class Editor {
     }
 
     addCube() {
-        const cube = Mesh.createCube(new Material({ color: [0.78, 0.84, 0.92] }));
-        cube.name = `Cube ${this.scene.meshes.length + 1}`;
-        cube.position = [0, 0.5, 0];
-        this.scene.add(cube);
-        this.select(cube);
+        this.addPrimitive('Cube');
+    }
+
+    addPrimitive(type) {
+        const material = new Material({ color: [0.78, 0.84, 0.92] });
+        const creators = {
+            Cube: () => Mesh.createCube(material),
+            Plane: () => Mesh.createPlane(material),
+            Sphere: () => Mesh.createUvSphere(material),
+            Cylinder: () => Mesh.createCylinder(material)
+        };
+        const mesh = creators[type]?.();
+        if (!mesh) return;
+        mesh.name = `${type} ${this.scene.meshes.length + 1}`;
+        mesh.position = [0, 0.5, 0];
+        this.scene.add(mesh);
+        this.select(mesh);
+    }
+
+    duplicateSelected() {
+        const source = this.selected;
+        if (!source) return;
+        const duplicate = new Mesh(new Material({
+            color: [...source.material.color],
+            useTexture: source.material.useTexture,
+            texture: source.material.texture
+        }));
+        duplicate.name = `${source.name} Copy`;
+        duplicate.position = source.position.map((value, axis) => value + (axis === 0 ? 1 : 0));
+        duplicate.rotation = [...source.rotation];
+        duplicate.scale = [...source.scale];
+        duplicate.polygons = source.polygons.map(polygon => polygon.map(vertex => [...vertex]));
+        duplicate.faceColors = source.faceColors.map(color => [...color]);
+        duplicate.faceTextures = [...source.faceTextures];
+        duplicate.faceTextureIds = [...source.faceTextureIds];
+        duplicate.faceUvTransforms = source.faceUvTransforms.map(transform => ({
+            scale: [...transform.scale],
+            offset: [...transform.offset],
+            rotation: transform.rotation,
+            flipX: transform.flipX,
+            flipY: transform.flipY
+        }));
+        duplicate.faceUvs = source.faceUvs.map(faceUvs => faceUvs.map(uv => [...uv]));
+        duplicate.textureAssetId = source.textureAssetId;
+        duplicate.rebuildRenderData();
+        const bones = new Map();
+        source.skeleton.bones.forEach(bone => {
+            const parent = bones.get(bone.parent) || null;
+            const cloned = duplicate.skeleton.addBone(bone.name, parent);
+            cloned.position = [...bone.position];
+            cloned.rotation = [...bone.rotation];
+            cloned.scale = [...bone.scale];
+            bones.set(bone, cloned);
+        });
+        duplicate.animationClip = source.animationClip;
+        this.scene.add(duplicate);
+        this.select(duplicate);
     }
 
     deleteSelected() {
