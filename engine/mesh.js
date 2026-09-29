@@ -24,6 +24,7 @@ export class Mesh {
         this.faceTextures = [];
         this.faceTextureIds = [];
         this.faceUvTransforms = [];
+        this.faceUvs = [];
         this.textureAssetId = null;
         this.faceCount = 0;
         this.selectedFace = -1;
@@ -44,6 +45,12 @@ export class Mesh {
             [[-0.5,0.5,0.5],[0.5,0.5,0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5]],
             [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,-0.5,0.5],[-0.5,-0.5,0.5]]
         ];
+        const netTiles = [[1, 1], [3, 1], [0, 1], [2, 1], [1, 2], [1, 0]];
+        mesh.faceUvs = mesh.polygons.map((polygon, faceIndex) => polygon.map(([u, v], vertexIndex) => {
+            const local = [[0, 0], [1, 0], [1, 1], [0, 1]][vertexIndex % 4];
+            const [tileX, tileY] = netTiles[faceIndex];
+            return [(tileX + local[0]) / 4, (tileY + local[1] + 0.5) / 4];
+        }));
         mesh.rebuildRenderData();
 
         return mesh;
@@ -94,6 +101,16 @@ export class Mesh {
         this.selectedFace = this.polygons.length - 1;
     }
 
+    moveFaceUVs(faceIndex, deltaU, deltaV) {
+        const faceUvs = this.faceUvs[faceIndex];
+        if (!faceUvs) return;
+        faceUvs.forEach(uv => {
+            uv[0] += deltaU;
+            uv[1] += deltaV;
+        });
+        this.rebuildRenderData();
+    }
+
     setFaceVertex(faceIndex, vertexIndex, position) {
         if (!this.polygons[faceIndex]?.[vertexIndex]) return;
         const previous = this.polygons[faceIndex][vertexIndex];
@@ -142,13 +159,16 @@ export class Mesh {
         const uvs = [];
         const indices = [];
         this.faceRanges = [];
-        const faceUVs = [[0, 0], [1, 0], [1, 1], [0, 1]];
         this.polygons.forEach((polygon, faceIndex) => {
             const vertexStart = vertices.length / 3;
+            if (!this.faceUvs[faceIndex]) this.faceUvs[faceIndex] = [];
             polygon.forEach((vertex, vertexIndex) => {
                 vertices.push(...vertex);
                 colors.push(1, 1, 1);
-                uvs.push(...faceUVs[vertexIndex % faceUVs.length]);
+                if (!this.faceUvs[faceIndex][vertexIndex]) {
+                    this.faceUvs[faceIndex][vertexIndex] = defaultFaceUV(faceIndex, vertexIndex, this.polygons.length);
+                }
+                uvs.push(...this.faceUvs[faceIndex][vertexIndex]);
             });
             for (let vertexIndex = 1; vertexIndex < polygon.length - 1; vertexIndex++) {
                 indices.push(vertexStart, vertexStart + vertexIndex, vertexStart + vertexIndex + 1);
@@ -306,4 +326,13 @@ export class Mesh {
         gl.bindBuffer(gl.ARRAY_BUFFER, this.uvBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, this.uvs, gl.STATIC_DRAW);
     }
+}
+
+function defaultFaceUV(faceIndex, vertexIndex, faceCount) {
+    const columns = Math.ceil(Math.sqrt(faceCount));
+    const rows = Math.ceil(faceCount / columns);
+    const tileX = faceIndex % columns;
+    const tileY = Math.floor(faceIndex / columns);
+    const local = [[0, 0], [1, 0], [1, 1], [0, 1]][vertexIndex % 4];
+    return [(tileX + local[0]) / columns, (tileY + local[1]) / rows];
 }

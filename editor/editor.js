@@ -49,6 +49,7 @@ export class Editor {
 
     update() {
         this.gizmos.update();
+        this.ui.updateUvWorkspace();
     }
 
     async importTexture(file) {
@@ -154,6 +155,7 @@ export class Editor {
                 faceColors: mesh.faceColors,
                 textureAssetId: mesh.textureAssetId,
                 faceTextureIds: mesh.faceTextureIds,
+                faceUvs: mesh.faceUvs,
                 faceUvTransforms: mesh.faceUvTransforms,
                 bones: mesh.skeleton.bones.map(bone => ({ name: bone.name, parent: bone.parent?.name || null, position: bone.position, rotation: bone.rotation, scale: bone.scale }))
             }))
