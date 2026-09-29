@@ -24,7 +24,7 @@ export class Editor {
             onAddPlane: () => this.addPrimitive('Plane'),
             onAddSphere: () => this.addPrimitive('Sphere'),
             onAddCylinder: () => this.addPrimitive('Cylinder'),
-            onAddBatch: (type, count, onProgress) => this.addPrimitiveBatch(type, count, onProgress),
+            onAddBatch: (type, count, spacing, onProgress) => this.addPrimitiveBatch(type, count, spacing, onProgress),
             onDuplicate: () => this.duplicateSelected(),
             onAddFace: () => this.addFace(),
             onExtrudeFace: () => this.extrudeFace(),
@@ -296,8 +296,13 @@ export class Editor {
         return creators[type]?.() || null;
     }
 
-    async addPrimitiveBatch(type, count, onProgress = () => {}) {
+    async addPrimitiveBatch(type, count, spacing = 2, onProgress = () => {}) {
+        if (typeof spacing === 'function') {
+            onProgress = spacing;
+            spacing = 2;
+        }
         const amount = Math.max(1, Math.min(100000, Math.floor(count) || 1));
+        spacing = Math.max(1.05, Math.min(10, Number(spacing) || 2));
         const columns = Math.ceil(Math.sqrt(amount));
         const rows = Math.ceil(amount / columns);
         const chunkSize = 250;
@@ -307,9 +312,9 @@ export class Editor {
             if (!mesh) throw new Error(`Unknown primitive type: ${type}`);
             mesh.name = `${type} ${this.scene.meshes.length + 1}`;
             mesh.position = [
-                (index % columns - (columns - 1) / 2) * 1.5,
+                (index % columns - (columns - 1) / 2) * spacing,
                 0.5,
-                (Math.floor(index / columns) - (rows - 1) / 2) * 1.5
+                (Math.floor(index / columns) - (rows - 1) / 2) * spacing
             ];
             this.scene.add(mesh);
             lastMesh = mesh;

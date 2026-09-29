@@ -23,7 +23,7 @@ export function createUI(root, options) {
         .tool-group summary::before { content: '+'; display: inline-block; width: 18px; color: #ffd071; }
         .tool-group[open] summary::before { content: '-'; }
         .tool-group-content { display: flex; flex-wrap: wrap; gap: 5px; padding: 6px 0 2px; }
-        .batch-create-controls { display: grid; grid-template-columns: minmax(100px, 1fr) 90px auto; gap: 5px; align-items: center; width: 100%; }
+        .batch-create-controls { display: grid; grid-template-columns: minmax(100px, 1fr) 80px 80px auto; gap: 5px; align-items: center; width: 100%; }
         .batch-create-status { grid-column: 1 / -1; min-height: 16px; color: #9aa9ba; font: 11px/1.3 ui-monospace, monospace; }
         .editor-title { margin: 0 12px 0 4px; font-size: 14px; letter-spacing: .04em; text-transform: uppercase; color: #9ed8ff; }
         .editor-button { border: 1px solid #3b526d; background: #1b2a3b; color: #e8edf5; padding: 6px 10px; cursor: pointer; border-radius: 3px; }
@@ -154,6 +154,14 @@ export function createUI(root, options) {
     batchAmount.step = '1';
     batchAmount.value = '100';
     batchAmount.setAttribute('aria-label', 'Number of meshes to add');
+    const batchSpacing = document.createElement('input');
+    batchSpacing.className = 'editor-input';
+    batchSpacing.type = 'number';
+    batchSpacing.min = '1.05';
+    batchSpacing.max = '10';
+    batchSpacing.step = '0.25';
+    batchSpacing.value = '2';
+    batchSpacing.setAttribute('aria-label', 'Grid spacing between meshes');
     const batchButton = document.createElement('button');
     batchButton.className = 'editor-button';
     batchButton.type = 'button';
@@ -162,11 +170,13 @@ export function createUI(root, options) {
     batchStatus.className = 'batch-create-status';
     batchButton.addEventListener('click', async () => {
         const amount = Math.max(1, Math.min(100000, Math.floor(Number(batchAmount.value) || 1)));
+        const spacing = Math.max(1.05, Math.min(10, Number(batchSpacing.value) || 2));
         batchAmount.value = String(amount);
+        batchSpacing.value = String(spacing);
         batchButton.disabled = true;
         batchStatus.textContent = `Adding ${amount} ${batchType.value.toLowerCase()} meshes...`;
         try {
-            await onAddBatch(batchType.value, amount, added => {
+            await onAddBatch(batchType.value, amount, spacing, added => {
                 batchStatus.textContent = `Added ${added} / ${amount}`;
             });
             batchStatus.textContent = `Added ${amount} ${batchType.value.toLowerCase()} meshes`;
@@ -176,7 +186,7 @@ export function createUI(root, options) {
             batchButton.disabled = false;
         }
     });
-    batchCreate.append(batchType, batchAmount, batchButton, batchStatus);
+    batchCreate.append(batchType, batchAmount, batchSpacing, batchButton, batchStatus);
     activeToolGroup.appendChild(batchCreate);
     button('+ Face', onAddFace);
     button('Extrude', onExtrudeFace);
