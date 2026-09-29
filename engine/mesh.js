@@ -104,6 +104,15 @@ export class Mesh {
     }
 
     rebuildRenderData() {
+        const verticesByPosition = new Map();
+        this.polygons = this.polygons.map(polygon => polygon.map(vertex => {
+            const key = vertex.join(',');
+            const attachedVertex = verticesByPosition.get(key);
+            if (attachedVertex) return attachedVertex;
+            verticesByPosition.set(key, vertex);
+            return vertex;
+        }));
+
         const vertices = [];
         const colors = [];
         const uvs = [];
