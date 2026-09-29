@@ -7,6 +7,8 @@ export class Renderer {
         if (!this.gl) throw new Error('WebGL not supported');
 
         this.resize();
+        this.gl.clearColor(0.1, 0.1, 0.15, 1.0);
+        this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
         window.addEventListener('resize', () => this.resize());
 
         this.program = null;

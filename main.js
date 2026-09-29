@@ -51,4 +51,10 @@ function loop() {
     requestAnimationFrame(loop);
 }
 
-init();
+init().catch(error => {
+    console.error('Editor startup failed:', error);
+    const message = document.createElement('pre');
+    message.textContent = `Editor startup failed\n${error.message || error}`;
+    message.style.cssText = 'position:fixed;left:16px;bottom:16px;max-width:calc(100vw - 32px);padding:12px;margin:0;color:#ffd8d8;background:#3a171d;border:1px solid #b85c68;font:13px/1.4 monospace;white-space:pre-wrap;z-index:10;';
+    document.body.appendChild(message);
+});
