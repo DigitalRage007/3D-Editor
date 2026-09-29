@@ -111,6 +111,21 @@ export class Mesh {
         this.rebuildRenderData();
     }
 
+    transformFaceUVs(faceIndex, rotation = 0, scaleX = 1, scaleY = 1) {
+        const faceUvs = this.faceUvs[faceIndex];
+        if (!faceUvs?.length) return;
+        const center = faceUvs.reduce((sum, uv) => [sum[0] + uv[0] / faceUvs.length, sum[1] + uv[1] / faceUvs.length], [0, 0]);
+        const cosine = Math.cos(rotation);
+        const sine = Math.sin(rotation);
+        faceUvs.forEach(uv => {
+            const x = (uv[0] - center[0]) * scaleX;
+            const y = (uv[1] - center[1]) * scaleY;
+            uv[0] = center[0] + x * cosine - y * sine;
+            uv[1] = center[1] + x * sine + y * cosine;
+        });
+        this.rebuildRenderData();
+    }
+
     setFaceVertex(faceIndex, vertexIndex, position) {
         if (!this.polygons[faceIndex]?.[vertexIndex]) return;
         const previous = this.polygons[faceIndex][vertexIndex];

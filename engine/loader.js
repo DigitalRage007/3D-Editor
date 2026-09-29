@@ -5,7 +5,7 @@ export async function loadTexture(url, gl) {
 }
 
 export async function loadTextureBlob(blob, gl) {
-    const img = await createImageBitmap(blob);
+    const img = await createImageBitmap(blob, { imageOrientation: 'flipY' });
 
     const tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
