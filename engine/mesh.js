@@ -70,6 +70,30 @@ export class Mesh {
         this.selectedFace = this.polygons.length - 1;
     }
 
+    extrudeFace(faceIndex, distance = 0.5) {
+        const face = this.polygons[faceIndex];
+        if (!face || face.length < 3) return;
+        const edgeA = face[1].map((value, axis) => value - face[0][axis]);
+        const edgeB = face[2].map((value, axis) => value - face[0][axis]);
+        const normal = [
+            edgeA[1] * edgeB[2] - edgeA[2] * edgeB[1],
+            edgeA[2] * edgeB[0] - edgeA[0] * edgeB[2],
+            edgeA[0] * edgeB[1] - edgeA[1] * edgeB[0]
+        ];
+        const normalLength = Math.hypot(...normal);
+        if (!normalLength) return;
+        const offset = normal.map(value => value / normalLength * distance);
+        const extrudedFace = face.map(vertex => vertex.map((value, axis) => value + offset[axis]));
+
+        for (let index = 0; index < face.length; index++) {
+            const next = (index + 1) % face.length;
+            this.polygons.push([face[index], face[next], extrudedFace[next], extrudedFace[index]]);
+        }
+        this.polygons.push(extrudedFace);
+        this.rebuildRenderData();
+        this.selectedFace = this.polygons.length - 1;
+    }
+
     setFaceVertex(faceIndex, vertexIndex, position) {
         if (!this.polygons[faceIndex]?.[vertexIndex]) return;
         const previous = this.polygons[faceIndex][vertexIndex];

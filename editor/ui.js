@@ -3,7 +3,7 @@ import { createInspectorPanel } from './panels/inspector.js';
 import { createAssetsPanel } from './panels/assets.js';
 
 export function createUI(root, options) {
-    const { scene, onSelect, onSelectFace, onSetPickMode, onAddCube, onAddFace, onAddVertex, onAddBone, onPlayAnimation, onImportMesh, onImportTexture, onDelete, onResetCamera, onExport } = options;
+    const { scene, onSelect, onSelectFace, onSetPickMode, onAddCube, onAddFace, onExtrudeFace, onAddVertex, onAddBone, onPlayAnimation, onImportMesh, onImportTexture, onDelete, onResetCamera, onExport } = options;
     root.style.pointerEvents = 'none';
     root.innerHTML = '';
 
@@ -68,11 +68,12 @@ export function createUI(root, options) {
     };
     button('+ Cube', onAddCube);
     button('+ Face', onAddFace);
+    button('Extrude', onExtrudeFace);
     button('+ Vertex', onAddVertex);
     button('+ Bone', onAddBone);
     button('Play', onPlayAnimation);
     button('Delete', onDelete);
-    button('Reset View', onResetCamera);
+    button('Center View', onResetCamera);
     button('Export', onExport);
     button('HUD -', () => setHudScale(Math.max(0.7, Number(container.dataset.hudScale || 1) - 0.1)));
     button('HUD +', () => setHudScale(Math.min(1.4, Number(container.dataset.hudScale || 1) + 0.1)));

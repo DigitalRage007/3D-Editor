@@ -22,6 +22,7 @@ export class Editor {
             onSetPickMode: mode => this.gizmos.setPickMode(mode),
             onAddCube: () => this.addCube(),
             onAddFace: () => this.addFace(),
+            onExtrudeFace: () => this.extrudeFace(),
             onAddVertex: () => this.addVertex(),
             onAddBone: () => this.addBone(),
             onPlayAnimation: () => this.playAnimation(),
@@ -72,6 +73,12 @@ export class Editor {
         if (!this.selected) return;
         this.selected.addFace([[0, 0, 0], [1, 0, 0], [0, 1, 0]]);
         this.selectFace(this.selected.faceCount - 1);
+    }
+
+    extrudeFace() {
+        if (!this.selected) return;
+        this.selected.extrudeFace(Math.max(0, this.selected.selectedFace));
+        this.selectFace(this.selected.selectedFace);
     }
 
     addVertex() {

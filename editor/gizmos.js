@@ -23,13 +23,13 @@ export class Gizmos {
 
     bindEvents() {
         this.canvas.addEventListener('pointerdown', event => {
-            if (event.button !== 0 && event.button !== 2) return;
+            if (event.button !== 0 && event.button !== 1 && event.button !== 2) return;
             this.dragging = true;
             this.activeButton = event.button;
             this.lastX = event.clientX;
             this.lastY = event.clientY;
             this.moved = false;
-            this.activePick = event.button === 0 ? this.pick(event.clientX, event.clientY) : null;
+            this.activePick = event.button === 0 && !event.shiftKey ? this.pick(event.clientX, event.clientY) : null;
             this.canvas.setPointerCapture(event.pointerId);
         });
         this.canvas.addEventListener('pointermove', event => {
@@ -37,8 +37,11 @@ export class Gizmos {
             const deltaX = event.clientX - this.lastX;
             const deltaY = event.clientY - this.lastY;
             this.moved = this.moved || Math.abs(deltaX) + Math.abs(deltaY) > 2;
-            if (this.activeButton === 0 && this.activePick && this.pickMode !== 'orbit') this.dragSelection(deltaX, deltaY);
-            else {
+            if ((this.activeButton === 1 || event.shiftKey) && this.activeButton !== 2) {
+                this.panCamera(deltaX, deltaY);
+            } else if (this.activeButton === 0 && this.activePick && this.pickMode !== 'orbit') {
+                this.dragSelection(deltaX, deltaY);
+            } else {
                 this.yaw -= deltaX * 0.01;
                 this.pitch = Math.max(-1.35, Math.min(1.35, this.pitch - deltaY * 0.01));
             }
@@ -48,7 +51,7 @@ export class Gizmos {
         this.canvas.addEventListener('pointerup', event => {
             this.dragging = false;
             this.canvas.releasePointerCapture(event.pointerId);
-            if (!this.moved && this.activeButton === 0) this.pick(event.clientX, event.clientY);
+            if (!this.moved && this.activeButton === 0 && !event.shiftKey) this.pick(event.clientX, event.clientY);
             this.activePick = null;
         });
         this.canvas.addEventListener('wheel', event => {
@@ -92,41 +95,66 @@ export class Gizmos {
         const rect = this.canvas.getBoundingClientRect();
         const x = ((clientX - rect.left) / rect.width) * 2 - 1;
         const y = 1 - ((clientY - rect.top) / rect.height) * 2;
-        let best = null;
+        const ray = this.createRay(x, y);
+        let hit = null;
         for (const mesh of this.scene.meshes) {
             const model = mesh.getModelMatrix();
             mesh.polygons.forEach((polygon, faceIndex) => {
-                polygon.forEach((vertex, vertexIndex) => {
-                    const projected = this.project(vertex, model);
-                    const distance = Math.hypot(projected[0] - x, projected[1] - y);
-                    if (distance < (best?.distance ?? 0.08) && distance < 0.08) best = { mesh, faceIndex, vertexIndex, vertexPosition: [...vertex], distance, vertex: true };
-                });
-                const center = polygon.reduce((sum, vertex) => sum.map((value, axis) => value + vertex[axis] / polygon.length), [0, 0, 0]);
-                const projected = this.project(center, model);
-                const distance = Math.hypot(projected[0] - x, projected[1] - y);
-                if (distance < (best?.distance ?? 0.18) && distance < 0.18) best = { mesh, faceIndex, distance, vertex: false };
+                if (polygon.length < 3) return;
+                const worldVertices = polygon.map(vertex => transformPoint(model, vertex));
+                for (let index = 1; index < worldVertices.length - 1; index++) {
+                    const distance = intersectRayTriangle(ray.origin, ray.direction, worldVertices[0], worldVertices[index], worldVertices[index + 1]);
+                    if (distance !== null && (hit === null || distance < hit.distance)) {
+                        hit = { mesh, faceIndex, distance };
+                    }
+                }
             });
         }
-        if (!best && this.pickMode === 'mesh') {
-            let nearestMesh = null;
-            let nearestDistance = Infinity;
-            this.scene.meshes.forEach(mesh => {
-                const points = mesh.polygons.flat();
-                if (!points.length) return;
-                const center = points.reduce((sum, vertex) => sum.map((value, axis) => value + vertex[axis] / points.length), [0, 0, 0]);
-                const projected = this.project(center, mesh.getModelMatrix());
+        if (!hit) return null;
+
+        if (this.pickMode === 'vertex') {
+            const polygon = hit.mesh.polygons[hit.faceIndex];
+            let nearestVertex = null;
+            let nearestDistance = 0.08;
+            polygon.forEach((vertex, vertexIndex) => {
+                const projected = this.project(vertex, hit.mesh.getModelMatrix());
                 const distance = Math.hypot(projected[0] - x, projected[1] - y);
                 if (distance < nearestDistance) {
-                    nearestMesh = { mesh, faceIndex: 0, vertexIndex: 0, distance, vertex: false };
+                    nearestVertex = { ...hit, vertexIndex, vertexPosition: [...vertex], vertex: true, screenDistance: distance };
                     nearestDistance = distance;
                 }
             });
-            best = nearestMesh;
+            if (nearestVertex) {
+                this.callbacks.onPickVertex?.(nearestVertex.mesh, nearestVertex.faceIndex, nearestVertex.vertexIndex);
+                return nearestVertex;
+            }
         }
-        if (!best) return null;
-        if (best.vertex) this.callbacks.onPickVertex?.(best.mesh, best.faceIndex, best.vertexIndex);
-        else this.callbacks.onPickFace?.(best.mesh, best.faceIndex);
-        return best;
+
+        this.callbacks.onPickFace?.(hit.mesh, hit.faceIndex);
+        return hit;
+    }
+
+    createRay(x, y) {
+        const forward = normalize(this.camera.target.map((value, index) => value - this.camera.position[index]));
+        const right = normalize(cross(forward, this.camera.up));
+        const up = cross(right, forward);
+        const tangent = Math.tan(this.camera.fov / 2);
+        const aspect = this.canvas.width / this.canvas.height;
+        const direction = normalize(forward.map((value, index) => value + right[index] * x * tangent * aspect + up[index] * y * tangent));
+        return { origin: [...this.camera.position], direction };
+    }
+
+    panCamera(deltaX, deltaY) {
+        const amount = this.distance / Math.max(1, this.canvas.height) * 2;
+        const right = [Math.cos(this.yaw), 0, -Math.sin(this.yaw)];
+        for (let axis = 0; axis < 3; axis++) {
+            const movement = -deltaX * amount * right[axis];
+            this.camera.target[axis] += movement;
+            this.camera.position[axis] += movement;
+        }
+        const verticalMovement = deltaY * amount;
+        this.camera.target[1] += verticalMovement;
+        this.camera.position[1] += verticalMovement;
     }
 
     project(point, model) {
@@ -163,4 +191,43 @@ function multiplyMatrixVector(matrix, vector) {
         matrix[2] * vector[0] + matrix[6] * vector[1] + matrix[10] * vector[2] + matrix[14] * vector[3],
         matrix[3] * vector[0] + matrix[7] * vector[1] + matrix[11] * vector[2] + matrix[15] * vector[3]
     ];
+}
+
+function transformPoint(matrix, point) {
+    const transformed = multiplyMatrixVector(matrix, [...point, 1]);
+    return transformed.slice(0, 3).map(value => value / transformed[3]);
+}
+
+function intersectRayTriangle(origin, direction, a, b, c) {
+    const edge1 = subtract(b, a);
+    const edge2 = subtract(c, a);
+    const p = cross(direction, edge2);
+    const determinant = dot(edge1, p);
+    if (Math.abs(determinant) < 1e-8) return null;
+    const inverseDeterminant = 1 / determinant;
+    const offset = subtract(origin, a);
+    const u = dot(offset, p) * inverseDeterminant;
+    if (u < 0 || u > 1) return null;
+    const q = cross(offset, edge1);
+    const v = dot(direction, q) * inverseDeterminant;
+    if (v < 0 || u + v > 1) return null;
+    const distance = dot(edge2, q) * inverseDeterminant;
+    return distance >= 0 ? distance : null;
+}
+
+function subtract(a, b) {
+    return a.map((value, index) => value - b[index]);
+}
+
+function cross(a, b) {
+    return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+}
+
+function dot(a, b) {
+    return a.reduce((sum, value, index) => sum + value * b[index], 0);
+}
+
+function normalize(vector) {
+    const length = Math.hypot(...vector) || 1;
+    return vector.map(value => value / length);
 }
