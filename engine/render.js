@@ -1,4 +1,4 @@
-import { loadShaderSource } from './loader.js';
+import { loadShaderSource, textureHasTransparency } from './loader.js';
 
 export class Renderer {
     constructor(canvas) {
@@ -13,6 +13,8 @@ export class Renderer {
 
         this.program = null;
         this.boneBuffer = null;
+        this.frameId = 0;
+        this.uniforms = null;
         this.ready = this.initProgram();
     }
 
@@ -34,6 +36,18 @@ export class Renderer {
         }
 
         this.program = prog;
+        this.uniforms = {
+            uView: gl.getUniformLocation(prog, 'uView'),
+            uProj: gl.getUniformLocation(prog, 'uProj'),
+            uModel: gl.getUniformLocation(prog, 'uModel'),
+            uColor: gl.getUniformLocation(prog, 'uColor'),
+            uUseTexture: gl.getUniformLocation(prog, 'uUseTexture'),
+            uTexture: gl.getUniformLocation(prog, 'uTexture'),
+            uUVTransform: gl.getUniformLocation(prog, 'uUVTransform'),
+            uUVRotation: gl.getUniformLocation(prog, 'uUVRotation'),
+            uUVCenter: gl.getUniformLocation(prog, 'uUVCenter'),
+            uFaceSelected: gl.getUniformLocation(prog, 'uFaceSelected')
+        };
         gl.useProgram(this.program);
     }
 
@@ -65,15 +79,13 @@ export class Renderer {
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
         gl.useProgram(this.program);
-
-        const uView = gl.getUniformLocation(this.program, 'uView');
-        const uProj = gl.getUniformLocation(this.program, 'uProj');
+        const frameId = ++this.frameId;
 
         const view = camera.getViewMatrix();
         const proj = camera.getProjectionMatrix(this.canvas.width / this.canvas.height);
 
-        gl.uniformMatrix4fv(uView, false, view);
-        gl.uniformMatrix4fv(uProj, false, proj);
+        gl.uniformMatrix4fv(this.uniforms.uView, false, view);
+        gl.uniformMatrix4fv(this.uniforms.uProj, false, proj);
 
         const opaqueFaces = new Map();
         const transparentFaces = [];
@@ -82,7 +94,7 @@ export class Renderer {
             mesh.faceRanges.forEach((_, faceIndex) => {
                 const color = mesh.faceColors[faceIndex] || [1, 1, 1, 1];
                 const texture = mesh.faceTextures[faceIndex] || (mesh.material.useTexture ? mesh.material.texture : null);
-                if (texture || (color[3] ?? 1) < 1) {
+                if ((texture && textureHasTransparency(texture)) || (color[3] ?? 1) < 1) {
                     const polygon = mesh.polygons[faceIndex];
                     const center = polygon.reduce((sum, vertex) => sum.map((value, axis) => value + vertex[axis] / polygon.length), [0, 0, 0]);
                     const worldCenter = transformPoint(model, center);
@@ -97,13 +109,13 @@ export class Renderer {
 
         gl.depthMask(true);
         for (const [mesh, faceIndices] of opaqueFaces) {
-            mesh.draw(gl, this.program, faceIndices);
+            mesh.draw(gl, this.program, faceIndices, frameId);
         }
 
         transparentFaces.sort((a, b) => b.distance - a.distance);
         gl.depthMask(false);
         for (const face of transparentFaces) {
-            face.mesh.draw(gl, this.program, [face.faceIndex]);
+            face.mesh.draw(gl, this.program, [face.faceIndex], frameId);
         }
         gl.depthMask(true);
         this.drawSkeletons(scene);
@@ -142,13 +154,13 @@ export class Renderer {
         gl.vertexAttribPointer(color, 3, gl.FLOAT, false, 24, 12);
         gl.disableVertexAttribArray(uv);
         gl.vertexAttrib2f(uv, 0, 0);
-        gl.uniformMatrix4fv(gl.getUniformLocation(program, 'uModel'), false, identityMatrix());
-        gl.uniform4fv(gl.getUniformLocation(program, 'uColor'), new Float32Array([1, 1, 1, 1]));
-        gl.uniform1i(gl.getUniformLocation(program, 'uUseTexture'), 0);
-        gl.uniform1f(gl.getUniformLocation(program, 'uFaceSelected'), 0);
-        gl.uniform4f(gl.getUniformLocation(program, 'uUVTransform'), 1, 1, 0, 0);
-        gl.uniform1f(gl.getUniformLocation(program, 'uUVRotation'), 0);
-        gl.uniform2f(gl.getUniformLocation(program, 'uUVCenter'), 0.5, 0.5);
+        gl.uniformMatrix4fv(this.uniforms.uModel, false, identityMatrix());
+        gl.uniform4fv(this.uniforms.uColor, new Float32Array([1, 1, 1, 1]));
+        gl.uniform1i(this.uniforms.uUseTexture, 0);
+        gl.uniform1f(this.uniforms.uFaceSelected, 0);
+        gl.uniform4f(this.uniforms.uUVTransform, 1, 1, 0, 0);
+        gl.uniform1f(this.uniforms.uUVRotation, 0);
+        gl.uniform2f(this.uniforms.uUVCenter, 0.5, 0.5);
         gl.drawArrays(gl.LINES, 0, lineData.length / 6);
         gl.depthMask(true);
         gl.enable(gl.DEPTH_TEST);

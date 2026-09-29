@@ -31,6 +31,9 @@ export class Mesh {
         this.selectedVertex = null;
         this.selectedBone = null;
         this.vertexWeights = new Map();
+        this.uniformLocations = null;
+        this.uniformProgram = null;
+        this.skinningFrame = null;
         this.polygons = [];
         this.faceRanges = [];
         this.skeleton = new Skeleton();
@@ -566,7 +569,7 @@ export class Mesh {
         return out;
     }
 
-    draw(gl, program, faceIndices = null) {
+    draw(gl, program, faceIndices = null, frameToken = undefined) {
         this.initBuffers(gl, program);
 
         if (gl.createVertexArray) {
@@ -575,52 +578,110 @@ export class Mesh {
             this.vaoExtension.bindVertexArrayOES(this.vao);
         }
 
-        const uModel = gl.getUniformLocation(program, 'uModel');
-        const uColor = gl.getUniformLocation(program, 'uColor');
-        const uUseTexture = gl.getUniformLocation(program, 'uUseTexture');
-        const uTexture = gl.getUniformLocation(program, 'uTexture');
-        const uUVTransform = gl.getUniformLocation(program, 'uUVTransform');
-        const uUVRotation = gl.getUniformLocation(program, 'uUVRotation');
-        const uUVCenter = gl.getUniformLocation(program, 'uUVCenter');
-        const uFaceSelected = gl.getUniformLocation(program, 'uFaceSelected');
-        gl.uniformMatrix4fv(uModel, false, this.getModelMatrix());
+        const uniforms = this.getUniformLocations(gl, program);
+        gl.uniformMatrix4fv(uniforms.uModel, false, this.getModelMatrix());
         if (this.vertexWeights.size) {
-            gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
-            gl.bufferData(gl.ARRAY_BUFFER, this.getDeformedVertices(), gl.DYNAMIC_DRAW);
+            if (frameToken === undefined || this.skinningFrame !== frameToken) {
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, this.getDeformedVertices(), gl.DYNAMIC_DRAW);
+                this.skinningFrame = frameToken;
+            }
         }
         const facesToDraw = faceIndices || this.faceRanges.map((_, faceIndex) => faceIndex);
+        let batchOffset = 0;
+        let batchCount = 0;
+        let batchColor = null;
+        let batchTexture = null;
+        let batchTransform = null;
+        let batchUvCenter = null;
+        let batchSelected = false;
+        let batchUvCenterRelevant = false;
+        let previousTexture = undefined;
+        const flushBatch = () => {
+            if (!batchCount) return;
+            gl.uniform4fv(uniforms.uColor, batchColor);
+            gl.uniform1i(uniforms.uUseTexture, batchTexture ? 1 : 0);
+            gl.uniform1f(uniforms.uFaceSelected, batchSelected ? 1 : 0);
+            gl.uniform4f(uniforms.uUVTransform, batchTransform.scale[0] * (batchTransform.flipX ? -1 : 1), batchTransform.scale[1] * (batchTransform.flipY ? -1 : 1), batchTransform.offset[0], batchTransform.offset[1]);
+            gl.uniform1f(uniforms.uUVRotation, batchTransform.rotation);
+            gl.uniform2f(uniforms.uUVCenter, batchUvCenter[0], batchUvCenter[1]);
+            if (batchTexture !== previousTexture && batchTexture) {
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, batchTexture);
+                gl.uniform1i(uniforms.uTexture, 0);
+                previousTexture = batchTexture;
+            }
+            gl.drawElements(gl.TRIANGLES, batchCount, gl.UNSIGNED_SHORT, batchOffset * 2);
+        };
         for (const faceIndex of facesToDraw) {
             const color = this.faceColors[faceIndex] || [...this.material.color, 1];
             const texture = this.faceTextures[faceIndex] || (this.material.useTexture ? this.material.texture : null);
             const transform = this.faceUvTransforms[faceIndex];
-            const faceUvs = this.faceUvs[faceIndex] || [];
-            const uvCenter = faceUvs.reduce((sum, uv) => [sum[0] + uv[0] / faceUvs.length, sum[1] + uv[1] / faceUvs.length], [0, 0]);
-            gl.uniform4fv(uColor, new Float32Array([color[0], color[1], color[2], color[3] ?? 1]));
-            gl.uniform1i(uUseTexture, texture ? 1 : 0);
-            gl.uniform1f(uFaceSelected, this.selectedFace === faceIndex ? 1 : 0);
-            gl.uniform4f(
-                uUVTransform,
-                transform.scale[0] * (transform.flipX ? -1 : 1),
-                transform.scale[1] * (transform.flipY ? -1 : 1),
-                transform.offset[0],
-                transform.offset[1]
-            );
-            gl.uniform1f(uUVRotation, transform.rotation);
-            gl.uniform2f(uUVCenter, uvCenter[0], uvCenter[1]);
-            if (texture) {
-                gl.activeTexture(gl.TEXTURE0);
-                gl.bindTexture(gl.TEXTURE_2D, texture);
-                gl.uniform1i(uTexture, 0);
+            const uvCenterRelevant = transform.rotation !== 0 || transform.scale[0] !== 1 || transform.scale[1] !== 1 || transform.flipX || transform.flipY;
+            let uvCenter = DEFAULT_UV_CENTER;
+            if (uvCenterRelevant) {
+                const faceUvs = this.faceUvs[faceIndex] || [];
+                if (faceUvs.length) {
+                    let centerU = 0;
+                    let centerV = 0;
+                    const weight = 1 / faceUvs.length;
+                    for (let uvIndex = 0; uvIndex < faceUvs.length; uvIndex++) {
+                        centerU += faceUvs[uvIndex][0] * weight;
+                        centerV += faceUvs[uvIndex][1] * weight;
+                    }
+                    uvCenter = [centerU, centerV];
+                }
             }
             const range = this.faceRanges[faceIndex];
-            gl.drawElements(gl.TRIANGLES, range.count, gl.UNSIGNED_SHORT, range.offset * 2);
+            const selected = this.selectedFace === faceIndex;
+            const sameState = batchCount
+                && batchOffset + batchCount === range.offset
+                && batchTexture === texture
+                && batchSelected === selected
+                && batchColor[0] === color[0] && batchColor[1] === color[1] && batchColor[2] === color[2] && batchColor[3] === (color[3] ?? 1)
+                && batchTransform.rotation === transform.rotation
+                && batchTransform.flipX === transform.flipX && batchTransform.flipY === transform.flipY
+                && batchTransform.scale[0] === transform.scale[0] && batchTransform.scale[1] === transform.scale[1]
+                && batchTransform.offset[0] === transform.offset[0] && batchTransform.offset[1] === transform.offset[1]
+                && batchUvCenterRelevant === uvCenterRelevant
+                && (!uvCenterRelevant || (batchUvCenter[0] === uvCenter[0] && batchUvCenter[1] === uvCenter[1]));
+            if (sameState) batchCount += range.count;
+            else {
+                flushBatch();
+                batchOffset = range.offset;
+                batchCount = range.count;
+                batchColor = [color[0], color[1], color[2], color[3] ?? 1];
+                batchTexture = texture;
+                batchTransform = transform;
+                batchUvCenter = uvCenter;
+                batchSelected = selected;
+                batchUvCenterRelevant = uvCenterRelevant;
+            }
         }
+        flushBatch();
 
         if (gl.createVertexArray) {
             gl.bindVertexArray(null);
         } else {
             this.vaoExtension.bindVertexArrayOES(null);
         }
+    }
+
+    getUniformLocations(gl, program) {
+        if (this.uniformProgram !== program) {
+            this.uniformProgram = program;
+            this.uniformLocations = {
+                uModel: gl.getUniformLocation(program, 'uModel'),
+                uColor: gl.getUniformLocation(program, 'uColor'),
+                uUseTexture: gl.getUniformLocation(program, 'uUseTexture'),
+                uTexture: gl.getUniformLocation(program, 'uTexture'),
+                uUVTransform: gl.getUniformLocation(program, 'uUVTransform'),
+                uUVRotation: gl.getUniformLocation(program, 'uUVRotation'),
+                uUVCenter: gl.getUniformLocation(program, 'uUVCenter'),
+                uFaceSelected: gl.getUniformLocation(program, 'uFaceSelected')
+            };
+        }
+        return this.uniformLocations;
     }
 
     updateGeometry(gl) {
@@ -633,6 +694,8 @@ export class Mesh {
         gl.bufferData(gl.ARRAY_BUFFER, this.uvs, gl.STATIC_DRAW);
     }
 }
+
+const DEFAULT_UV_CENTER = [0.5, 0.5];
 
 function defaultFaceUV(faceIndex, vertexIndex, faceCount) {
     const columns = Math.ceil(Math.sqrt(faceCount));
