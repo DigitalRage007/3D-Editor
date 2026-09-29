@@ -61,6 +61,8 @@ export class Editor {
     update() {
         this.gizmos.update();
         this.ui.updateUvWorkspace();
+        const allPolygons = this.scene.meshes.reduce((sum, mesh) => sum + mesh.faceCount, 0);
+        this.ui.setPolygonCount(this.selected?.faceCount || 0, allPolygons);
     }
 
     async importTexture(file) {

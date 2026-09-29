@@ -12,6 +12,7 @@ export function createUI(root, options) {
     style.textContent = `
         #ui-root { color: #e8edf5; font: 13px/1.4 system-ui, sans-serif; }
         .internal-fps { position: fixed; right: 12px; bottom: 12px; z-index: 20; padding: 6px 9px; color: #bfe9d3; background: rgba(13, 23, 20, 0.92); border: 1px solid rgba(115, 190, 150, 0.45); font: 12px/1.3 ui-monospace, monospace; font-variant-numeric: tabular-nums; pointer-events: none; }
+        .polygon-counter { position: fixed; right: 12px; bottom: 44px; z-index: 20; max-width: calc(100vw - 24px); padding: 6px 9px; color: #d7e8fa; background: rgba(15, 23, 34, 0.94); border: 1px solid rgba(130, 165, 202, 0.4); font: 12px/1.3 ui-monospace, monospace; font-variant-numeric: tabular-nums; pointer-events: none; }
         .editor-shell { display: flex; flex-direction: column; gap: 8px; padding: 12px; width: min(100% - 24px, 920px); box-sizing: border-box; pointer-events: none; transform-origin: top left; }
         .editor-toolbar { background: rgba(16, 22, 32, 0.92); border: 1px solid rgba(164, 183, 211, 0.2); box-shadow: 0 10px 30px rgba(0,0,0,.25); pointer-events: auto; }
         .editor-toolbar { display: flex; flex-direction: column; gap: 5px; padding: 7px; }
@@ -80,6 +81,10 @@ export function createUI(root, options) {
     fpsReadout.className = 'internal-fps';
     fpsReadout.textContent = 'Internal FPS --';
     root.appendChild(fpsReadout);
+    const polygonReadout = document.createElement('div');
+    polygonReadout.className = 'polygon-counter';
+    polygonReadout.textContent = 'Current Mesh Polygons / All Polygons: 0 / 0';
+    root.appendChild(polygonReadout);
     window.addEventListener('keydown', event => {
         if (event.key.toLowerCase() !== 'f' || ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
         root.style.display = root.style.display === 'none' ? '' : 'none';
@@ -487,6 +492,7 @@ export function createUI(root, options) {
         refreshHierarchy: hierarchy.refresh,
         refreshBones: bones.refresh,
         setInternalFps: (fps, frameMs) => { fpsReadout.textContent = `Internal FPS ${Math.round(fps)} | ${frameMs.toFixed(2)} ms`; },
+        setPolygonCount: (current, total) => { polygonReadout.textContent = `Current Mesh Polygons / All Polygons: ${current} / ${total}`; },
         refreshTextures: () => { assets.refresh(); inspector.refresh(); refreshUvTextures(); },
         updateUvWorkspace: drawUvWorkspace,
         setPickMode: mode => {
