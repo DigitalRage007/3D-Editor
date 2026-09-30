@@ -694,7 +694,6 @@ export class Mesh {
             gl.drawElements(gl.TRIANGLES, batchCount, gl.UNSIGNED_SHORT, batchOffset * 2);
         };
         for (const batch of batches) {
-        this.normals = new Float32Array(normals);
             batchOffset = batch.offset;
             batchCount = batch.count;
             batchColor = batch.color;

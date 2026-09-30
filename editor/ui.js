@@ -3,6 +3,7 @@ import { createInspectorPanel } from './panels/inspector.js';
 import { createAssetsPanel } from './panels/assets.js';
 import { createBonesPanel } from './panels/bones.js';
 import { createLightingPanel } from './panels/lighting.js';
+import { DirectionalLight } from '../engine/light.js';
 
 export function createUI(root, options) {
     const { scene, onSelect, onSelectFace, onSetPickMode, onAddCube, onAddPlane, onAddSphere, onAddCylinder, onAddBatch, onDuplicate, onAddFace, onExtrudeFace, onMergeFace, onMergeVertices, onAddVertex, onAddBone, onRemoveBone, onCreateAnimation, onKeyPose, onDeleteBoneKeys, onSeekAnimation, onToggleAnimation, onRenameAnimation, onSetAnimationDuration, onImportMesh, onImportTexture, onDelete, onReorderMesh, onResetCamera, onExport, onUndo, onRedo, onHistory = () => {} } = options;
@@ -582,6 +583,7 @@ export function createUI(root, options) {
     const inspector = createInspectorPanel(options.gl, options.textureLibrary, onSelectFace, onHistory);
     const assets = createAssetsPanel(options.textureLibrary, onImportMesh, onImportTexture);
     const bones = createBonesPanel({ onAddBone, onRemoveBone, onCreateAnimation, onKeyPose, onDeleteBoneKeys, onSeekAnimation, onToggleAnimation, onRenameAnimation, onSetAnimationDuration, onHistory });
+    if (!scene.light) scene.light = new DirectionalLight();
     const lighting = createLightingPanel(scene.light, onHistory);
 
     const panelDisclosure = (label, element, index) => {
