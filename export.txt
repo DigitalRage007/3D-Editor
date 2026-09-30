@@ -3050,6 +3050,9 @@ export class Mesh {
         this.selectedVertex = null;
         this.selectedBone = null;
         this.vertexWeights = new Map();
+        this.skinRevision = 0;
+        this.shadowedFaces = [];
+        this.shadowVersion = 0;
         this.uniformLocations = null;
         this.uniformProgram = null;
         this.skinningFrame = null;
@@ -3274,7 +3277,7 @@ export class Mesh {
 
     getInstanceBatchKey() {
         if (this.selectedFace >= 0 || this.vertexWeights.size || this.skeleton.bones.length || this.transparentFaceIndices.length) return null;
-        return this.instanceBatchKey;
+        return this.instanceBatchKey ? `${this.instanceBatchKey}:${this.shadowedFaces.join('')}` : null;
     }
 
     setFaceColor(faceIndex, color) {
@@ -3304,6 +3307,7 @@ export class Mesh {
         const total = [...skin.weights.values()].reduce((sum, value) => sum + value, 0);
         if (total > 1) skin.weights.forEach((value, weightedBone) => skin.weights.set(weightedBone, value / total));
         if (!skin.weights.size) this.vertexWeights.delete(vertex);
+        this.skinRevision++;
         return true;
     }
 
@@ -3334,13 +3338,16 @@ export class Mesh {
             skin.weights.set(bone, Math.max(skin.weights.get(bone) || 0, influence * Math.max(0, 1 - otherTotal)));
             assigned++;
         });
+        if (assigned) this.skinRevision++;
         return assigned;
     }
 
     clearVertexBoneWeights(faceIndex, vertexIndex) {
         const vertex = this.polygons[faceIndex]?.[vertexIndex];
         if (!vertex) return false;
-        return this.vertexWeights.delete(vertex);
+        const cleared = this.vertexWeights.delete(vertex);
+        if (cleared) this.skinRevision++;
+        return cleared;
     }
 
     removeBone(index) {
@@ -3351,6 +3358,7 @@ export class Mesh {
             removed.forEach(removedBone => skin.weights.delete(removedBone));
             if (!skin.weights.size) this.vertexWeights.delete(vertex);
         });
+        this.skinRevision++;
         this.selectedBone = this.skeleton.bones.length ? Math.min(index, this.skeleton.bones.length - 1) : null;
         return true;
     }
@@ -3691,6 +3699,7 @@ export class Mesh {
         let batchTransform = null;
         let batchUvCenter = null;
         let batchSelected = false;
+        let batchShadowed = false;
         let batchUvCenterRelevant = false;
         let previousTexture = undefined;
         const flushBatch = () => {
@@ -3698,6 +3707,7 @@ export class Mesh {
             gl.uniform4fv(uniforms.uColor, batchColor);
             gl.uniform1i(uniforms.uUseTexture, batchTexture ? 1 : 0);
             gl.uniform1f(uniforms.uFaceSelected, batchSelected ? 1 : 0);
+            gl.uniform1f(uniforms.uRayShadowed, batchShadowed ? 1 : 0);
             gl.uniform4f(uniforms.uUVTransform, batchTransform.scale[0] * (batchTransform.flipX ? -1 : 1), batchTransform.scale[1] * (batchTransform.flipY ? -1 : 1), batchTransform.offset[0], batchTransform.offset[1]);
             gl.uniform1f(uniforms.uUVRotation, batchTransform.rotation);
             gl.uniform2f(uniforms.uUVCenter, batchUvCenter[0], batchUvCenter[1]);
@@ -3717,6 +3727,7 @@ export class Mesh {
             batchTransform = batch.transform;
             batchUvCenter = batch.uvCenter;
             batchSelected = batch.selected;
+            batchShadowed = batch.shadowed;
             batchUvCenterRelevant = batch.uvCenterRelevant;
             flushBatch();
         }
@@ -3730,7 +3741,7 @@ export class Mesh {
 
     getDrawBatches(faceIndices) {
         const cached = this.drawBatchCache.get(faceIndices);
-        if (cached && cached.version === this.renderStateVersion && cached.selectedFace === this.selectedFace) return cached.batches;
+        if (cached && cached.version === this.renderStateVersion && cached.selectedFace === this.selectedFace && cached.shadowVersion === this.shadowVersion) return cached.batches;
         const batches = [];
         let current = null;
         for (const faceIndex of faceIndices) {
@@ -3753,15 +3764,16 @@ export class Mesh {
             }
             const range = this.faceRanges[faceIndex];
             const selected = this.selectedFace === faceIndex;
+            const shadowed = !!this.shadowedFaces[faceIndex];
             const batchColor = [color[0], color[1], color[2], color[3] ?? 1];
-            if (current && current.offset + current.count === range.offset && sameFaceState(current, texture, batchColor, transform, uvCenter, uvCenterRelevant, selected)) {
+            if (current && current.offset + current.count === range.offset && sameFaceState(current, texture, batchColor, transform, uvCenter, uvCenterRelevant, selected, shadowed)) {
                 current.count += range.count;
             } else {
-                current = { offset: range.offset, count: range.count, color: batchColor, texture, transform, uvCenter, uvCenterRelevant, selected };
+                current = { offset: range.offset, count: range.count, color: batchColor, texture, transform, uvCenter, uvCenterRelevant, selected, shadowed };
                 batches.push(current);
             }
         }
-        this.drawBatchCache.set(faceIndices, { version: this.renderStateVersion, selectedFace: this.selectedFace, batches });
+        this.drawBatchCache.set(faceIndices, { version: this.renderStateVersion, selectedFace: this.selectedFace, shadowVersion: this.shadowVersion, batches });
         return batches;
     }
 
@@ -3777,6 +3789,7 @@ export class Mesh {
                 uUVRotation: gl.getUniformLocation(program, 'uUVRotation'),
                 uUVCenter: gl.getUniformLocation(program, 'uUVCenter'),
                 uFaceSelected: gl.getUniformLocation(program, 'uFaceSelected'),
+                uRayShadowed: gl.getUniformLocation(program, 'uRayShadowed'),
                 uToonShading: gl.getUniformLocation(program, 'uToonShading'),
                 uInstanced: gl.getUniformLocation(program, 'uInstanced')
             };
@@ -3815,9 +3828,10 @@ function hashGeometry(vertices, indices) {
     return `${vertices.length}:${indices.length}:${first >>> 0}:${second >>> 0}`;
 }
 
-function sameFaceState(batch, texture, color, transform, uvCenter, uvCenterRelevant, selected) {
+function sameFaceState(batch, texture, color, transform, uvCenter, uvCenterRelevant, selected, shadowed) {
     return batch.texture === texture
         && batch.selected === selected
+        && batch.shadowed === shadowed
         && batch.color[0] === color[0]
         && batch.color[1] === color[1]
         && batch.color[2] === color[2]
@@ -3913,8 +3927,158 @@ function stitchFaceEdges(edges) {
     return currentKey === startKey && remaining.length === 0 ? { vertices, uvs } : null;
 }
 
+===== FILE: engine/raytracing.js =====
+export function traceDirectionalShadowFaces(scene, light) {
+    const shadowedFaces = new Map(scene.meshes.map(mesh => [mesh, Array(mesh.faceCount).fill(false)]));
+    if (!light || !scene.meshes.some(mesh => mesh.material.shading === 'toon')) return shadowedFaces;
+
+    const lightDirection = normalize(light.direction.map(value => -value));
+    if (!lightDirection) return shadowedFaces;
+
+    const worldPolygons = new Map();
+    const triangles = [];
+    scene.meshes.forEach(mesh => {
+        const model = mesh.getModelMatrix();
+        const pose = mesh.vertexWeights.size ? mesh.skeleton.getWorldTransforms() : null;
+        const bind = mesh.vertexWeights.size ? mesh.skeleton.getWorldTransforms(true) : null;
+        const polygons = mesh.polygons.map(polygon => polygon.map(vertex => {
+            const local = mesh.vertexWeights.size ? mesh.getDeformedPoint(vertex, pose, bind) : vertex;
+            return transformPoint(model, local);
+        }));
+        worldPolygons.set(mesh, polygons);
+
+        polygons.forEach((polygon, faceIndex) => {
+            if (polygon.length < 3) return;
+            const color = mesh.faceColors[faceIndex] || mesh.material.color;
+            if ((color[3] ?? 1) <= 0.01) return;
+            for (let vertexIndex = 1; vertexIndex < polygon.length - 1; vertexIndex++) {
+                const triangle = {
+                    mesh,
+                    faceIndex,
+                    a: polygon[0],
+                    b: polygon[vertexIndex],
+                    c: polygon[vertexIndex + 1]
+                };
+                triangle.min = [0, 1, 2].map(axis => Math.min(triangle.a[axis], triangle.b[axis], triangle.c[axis]));
+                triangle.max = [0, 1, 2].map(axis => Math.max(triangle.a[axis], triangle.b[axis], triangle.c[axis]));
+                triangle.center = triangle.min.map((value, axis) => (value + triangle.max[axis]) * 0.5);
+                triangles.push(triangle);
+            }
+        });
+    });
+
+    const bvh = buildBVH(triangles);
+    if (!bvh) return shadowedFaces;
+
+    scene.meshes.forEach(mesh => {
+        if (mesh.material.shading !== 'toon') return;
+        const polygons = worldPolygons.get(mesh);
+        const faceShadows = shadowedFaces.get(mesh);
+        polygons.forEach((polygon, faceIndex) => {
+            if (polygon.length < 3) return;
+            const center = polygon.reduce((sum, vertex) => sum.map((value, axis) => value + vertex[axis] / polygon.length), [0, 0, 0]);
+            const origin = center.map((value, axis) => value + lightDirection[axis] * 0.0001);
+            faceShadows[faceIndex] = hasOccluder(bvh, origin, lightDirection, mesh, faceIndex);
+        });
+    });
+    return shadowedFaces;
+}
+
+function buildBVH(triangles) {
+    if (!triangles.length) return null;
+    const min = [Infinity, Infinity, Infinity];
+    const max = [-Infinity, -Infinity, -Infinity];
+    triangles.forEach(triangle => {
+        for (let axis = 0; axis < 3; axis++) {
+            min[axis] = Math.min(min[axis], triangle.min[axis]);
+            max[axis] = Math.max(max[axis], triangle.max[axis]);
+        }
+    });
+    if (triangles.length <= 8) return { min, max, triangles };
+
+    const spans = max.map((value, axis) => value - min[axis]);
+    const axis = spans.indexOf(Math.max(...spans));
+    triangles.sort((a, b) => a.center[axis] - b.center[axis]);
+    const middle = Math.floor(triangles.length / 2);
+    const left = buildBVH(triangles.slice(0, middle));
+    const right = buildBVH(triangles.slice(middle));
+    return { min, max, left, right };
+}
+
+function hasOccluder(node, origin, direction, sourceMesh, sourceFace) {
+    if (!node || !rayIntersectsBounds(origin, direction, node.min, node.max)) return false;
+    if (node.triangles) {
+        return node.triangles.some(triangle => {
+            if (triangle.mesh === sourceMesh && triangle.faceIndex === sourceFace) return false;
+            return rayIntersectsTriangle(origin, direction, triangle);
+        });
+    }
+    return hasOccluder(node.left, origin, direction, sourceMesh, sourceFace)
+        || hasOccluder(node.right, origin, direction, sourceMesh, sourceFace);
+}
+
+function rayIntersectsBounds(origin, direction, min, max) {
+    let near = 0;
+    let far = Infinity;
+    for (let axis = 0; axis < 3; axis++) {
+        if (Math.abs(direction[axis]) < 1e-10) {
+            if (origin[axis] < min[axis] || origin[axis] > max[axis]) return false;
+            continue;
+        }
+        const first = (min[axis] - origin[axis]) / direction[axis];
+        const second = (max[axis] - origin[axis]) / direction[axis];
+        near = Math.max(near, Math.min(first, second));
+        far = Math.min(far, Math.max(first, second));
+        if (far < near) return false;
+    }
+    return far > 1e-5;
+}
+
+function rayIntersectsTriangle(origin, direction, triangle) {
+    const edgeA = subtract(triangle.b, triangle.a);
+    const edgeB = subtract(triangle.c, triangle.a);
+    const directionCrossEdgeB = cross(direction, edgeB);
+    const determinant = dot(edgeA, directionCrossEdgeB);
+    if (Math.abs(determinant) < 1e-8) return false;
+
+    const inverse = 1 / determinant;
+    const offset = subtract(origin, triangle.a);
+    const u = dot(offset, directionCrossEdgeB) * inverse;
+    if (u < 0 || u > 1) return false;
+    const q = cross(offset, edgeA);
+    const v = dot(direction, q) * inverse;
+    if (v < 0 || u + v > 1) return false;
+    return dot(edgeB, q) * inverse > 1e-5;
+}
+
+function transformPoint(matrix, point) {
+    return [
+        matrix[0] * point[0] + matrix[4] * point[1] + matrix[8] * point[2] + matrix[12],
+        matrix[1] * point[0] + matrix[5] * point[1] + matrix[9] * point[2] + matrix[13],
+        matrix[2] * point[0] + matrix[6] * point[1] + matrix[10] * point[2] + matrix[14]
+    ];
+}
+
+function normalize(vector) {
+    const length = Math.hypot(...vector);
+    return length > 1e-10 ? vector.map(value => value / length) : null;
+}
+
+function subtract(a, b) {
+    return a.map((value, axis) => value - b[axis]);
+}
+
+function cross(a, b) {
+    return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+}
+
+function dot(a, b) {
+    return a.reduce((sum, value, axis) => sum + value * b[axis], 0);
+}
+
 ===== FILE: engine/render.js =====
 import { loadShaderSource } from './loader.js';
+import { traceDirectionalShadowFaces } from './raytracing.js';
 
 export class Renderer {
     constructor(canvas) {
@@ -3933,6 +4097,7 @@ export class Renderer {
         this.boneBuffer = null;
         this.frameId = 0;
         this.uniforms = null;
+        this.shadowSignature = null;
         this.ready = this.initProgram();
     }
 
@@ -3965,6 +4130,7 @@ export class Renderer {
             uUVRotation: gl.getUniformLocation(prog, 'uUVRotation'),
             uUVCenter: gl.getUniformLocation(prog, 'uUVCenter'),
             uFaceSelected: gl.getUniformLocation(prog, 'uFaceSelected'),
+            uRayShadowed: gl.getUniformLocation(prog, 'uRayShadowed'),
             uToonShading: gl.getUniformLocation(prog, 'uToonShading'),
             uLightDirection: gl.getUniformLocation(prog, 'uLightDirection'),
             uLightColor: gl.getUniformLocation(prog, 'uLightColor'),
@@ -4019,6 +4185,19 @@ export class Renderer {
             gl.uniform1f(this.uniforms.uLightIntensity, light.intensity);
             gl.uniform1f(this.uniforms.uLightThreshold, light.threshold);
             gl.uniform3fv(this.uniforms.uShadeColor, new Float32Array(light.shadeColor));
+        }
+        const shadowSignature = makeShadowSignature(scene);
+        if (shadowSignature !== this.shadowSignature) {
+            const tracedShadows = traceDirectionalShadowFaces(scene, light);
+            scene.meshes.forEach(mesh => {
+                const next = tracedShadows.get(mesh) || Array(mesh.faceCount).fill(false);
+                const previous = mesh.shadowedFaces || [];
+                if (next.length !== previous.length || next.some((shadowed, index) => shadowed !== previous[index])) {
+                    mesh.shadowedFaces = next;
+                    mesh.shadowVersion = (mesh.shadowVersion || 0) + 1;
+                }
+            });
+            this.shadowSignature = shadowSignature;
         }
 
         const transparentFaces = [];
@@ -4099,6 +4278,7 @@ export class Renderer {
             gl.uniform4fv(uniforms.uColor, batch.color);
             gl.uniform1i(uniforms.uUseTexture, 0);
             gl.uniform1f(uniforms.uFaceSelected, batch.selected ? 1 : 0);
+            gl.uniform1f(uniforms.uRayShadowed, batch.shadowed ? 1 : 0);
             gl.uniform4f(uniforms.uUVTransform, batch.transform.scale[0] * (batch.transform.flipX ? -1 : 1), batch.transform.scale[1] * (batch.transform.flipY ? -1 : 1), batch.transform.offset[0], batch.transform.offset[1]);
             gl.uniform1f(uniforms.uUVRotation, batch.transform.rotation);
             gl.uniform2f(uniforms.uUVCenter, batch.uvCenter[0], batch.uvCenter[1]);
@@ -4150,6 +4330,7 @@ export class Renderer {
         gl.uniformMatrix4fv(this.uniforms.uModel, false, identityMatrix());
         gl.uniform1f(this.uniforms.uInstanced, 0);
         gl.uniform1f(this.uniforms.uToonShading, 0);
+        gl.uniform1f(this.uniforms.uRayShadowed, 0);
         gl.uniform4fv(this.uniforms.uColor, new Float32Array([1, 1, 1, 1]));
         gl.uniform1i(this.uniforms.uUseTexture, 0);
         gl.uniform1f(this.uniforms.uFaceSelected, 0);
@@ -4175,6 +4356,31 @@ function rotateVector(matrix, vector) {
 
 function identityMatrix() {
     return new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+}
+
+function makeShadowSignature(scene) {
+    let hash = 2166136261;
+    const add = value => {
+        hash = Math.imul(hash ^ Math.round((Number(value) || 0) * 1e5), 16777619);
+    };
+    add(scene.meshes.length);
+    scene.light?.direction.forEach(add);
+    scene.meshes.forEach(mesh => {
+        add(mesh.renderStateVersion);
+        add(mesh.material.shading === 'toon' ? 1 : 0);
+        mesh.position.forEach(add);
+        mesh.rotation.forEach(add);
+        mesh.scale.forEach(add);
+        add(mesh.skinRevision);
+        if (!mesh.vertexWeights.size) return;
+        if (mesh.animationPlayer.playing) add(Math.floor(mesh.animationPlayer.time * 24));
+        else mesh.skeleton.bones.forEach(bone => {
+            bone.position.forEach(add);
+            bone.rotation.forEach(add);
+            bone.scale.forEach(add);
+        });
+    });
+    return hash >>> 0;
 }
 
 ===== FILE: engine/scene.js =====
@@ -4221,6 +4427,7 @@ uniform sampler2D uTexture;
 uniform vec4 uColor;
 uniform float uFaceSelected;
 uniform float uToonShading;
+uniform float uRayShadowed;
 uniform vec3 uLightDirection;
 uniform vec3 uLightColor;
 uniform float uLightIntensity;
@@ -4237,7 +4444,7 @@ void main() {
     }
     if (uToonShading > 0.5) {
         float diffuse = clamp(max(dot(vNormal, -uLightDirection), 0.0) * uLightIntensity, 0.0, 1.0);
-        vec3 tone = diffuse >= uLightThreshold ? uLightColor : uShadeColor;
+        vec3 tone = uRayShadowed > 0.5 || diffuse < uLightThreshold ? uShadeColor : uLightColor;
         color *= tone;
     }
     color = mix(color, vec3(1.0, 0.72, 0.12), uFaceSelected * 0.35);
@@ -4278,7 +4485,8 @@ void main() {
         model = mat4(aInstance0, aInstance1, aInstance2, aInstance3);
     }
     vec3 modelScale = vec3(length(model[0].xyz), length(model[1].xyz), length(model[2].xyz));
-    vNormal = normalize(mat3(model) * (aNormal / max(modelScale, vec3(0.00001))));
+    vec3 inverseSquaredScale = vec3(1.0) / max(modelScale * modelScale, vec3(0.0000001));
+    vNormal = normalize(mat3(model) * (aNormal * inverseSquaredScale));
     gl_Position = uProj * uView * model * vec4(aPosition, 1.0);
 }
 

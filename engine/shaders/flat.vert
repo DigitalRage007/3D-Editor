@@ -31,6 +31,7 @@ void main() {
         model = mat4(aInstance0, aInstance1, aInstance2, aInstance3);
     }
     vec3 modelScale = vec3(length(model[0].xyz), length(model[1].xyz), length(model[2].xyz));
-    vNormal = normalize(mat3(model) * (aNormal / max(modelScale, vec3(0.00001))));
+    vec3 inverseSquaredScale = vec3(1.0) / max(modelScale * modelScale, vec3(0.0000001));
+    vNormal = normalize(mat3(model) * (aNormal * inverseSquaredScale));
     gl_Position = uProj * uView * model * vec4(aPosition, 1.0);
 }

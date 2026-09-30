@@ -34,6 +34,9 @@ export class Mesh {
         this.selectedVertex = null;
         this.selectedBone = null;
         this.vertexWeights = new Map();
+        this.skinRevision = 0;
+        this.shadowedFaces = [];
+        this.shadowVersion = 0;
         this.uniformLocations = null;
         this.uniformProgram = null;
         this.skinningFrame = null;
@@ -258,7 +261,7 @@ export class Mesh {
 
     getInstanceBatchKey() {
         if (this.selectedFace >= 0 || this.vertexWeights.size || this.skeleton.bones.length || this.transparentFaceIndices.length) return null;
-        return this.instanceBatchKey;
+        return this.instanceBatchKey ? `${this.instanceBatchKey}:${this.shadowedFaces.join('')}` : null;
     }
 
     setFaceColor(faceIndex, color) {
@@ -288,6 +291,7 @@ export class Mesh {
         const total = [...skin.weights.values()].reduce((sum, value) => sum + value, 0);
         if (total > 1) skin.weights.forEach((value, weightedBone) => skin.weights.set(weightedBone, value / total));
         if (!skin.weights.size) this.vertexWeights.delete(vertex);
+        this.skinRevision++;
         return true;
     }
 
@@ -318,13 +322,16 @@ export class Mesh {
             skin.weights.set(bone, Math.max(skin.weights.get(bone) || 0, influence * Math.max(0, 1 - otherTotal)));
             assigned++;
         });
+        if (assigned) this.skinRevision++;
         return assigned;
     }
 
     clearVertexBoneWeights(faceIndex, vertexIndex) {
         const vertex = this.polygons[faceIndex]?.[vertexIndex];
         if (!vertex) return false;
-        return this.vertexWeights.delete(vertex);
+        const cleared = this.vertexWeights.delete(vertex);
+        if (cleared) this.skinRevision++;
+        return cleared;
     }
 
     removeBone(index) {
@@ -335,6 +342,7 @@ export class Mesh {
             removed.forEach(removedBone => skin.weights.delete(removedBone));
             if (!skin.weights.size) this.vertexWeights.delete(vertex);
         });
+        this.skinRevision++;
         this.selectedBone = this.skeleton.bones.length ? Math.min(index, this.skeleton.bones.length - 1) : null;
         return true;
     }
@@ -675,6 +683,7 @@ export class Mesh {
         let batchTransform = null;
         let batchUvCenter = null;
         let batchSelected = false;
+        let batchShadowed = false;
         let batchUvCenterRelevant = false;
         let previousTexture = undefined;
         const flushBatch = () => {
@@ -682,6 +691,7 @@ export class Mesh {
             gl.uniform4fv(uniforms.uColor, batchColor);
             gl.uniform1i(uniforms.uUseTexture, batchTexture ? 1 : 0);
             gl.uniform1f(uniforms.uFaceSelected, batchSelected ? 1 : 0);
+            gl.uniform1f(uniforms.uRayShadowed, batchShadowed ? 1 : 0);
             gl.uniform4f(uniforms.uUVTransform, batchTransform.scale[0] * (batchTransform.flipX ? -1 : 1), batchTransform.scale[1] * (batchTransform.flipY ? -1 : 1), batchTransform.offset[0], batchTransform.offset[1]);
             gl.uniform1f(uniforms.uUVRotation, batchTransform.rotation);
             gl.uniform2f(uniforms.uUVCenter, batchUvCenter[0], batchUvCenter[1]);
@@ -701,6 +711,7 @@ export class Mesh {
             batchTransform = batch.transform;
             batchUvCenter = batch.uvCenter;
             batchSelected = batch.selected;
+            batchShadowed = batch.shadowed;
             batchUvCenterRelevant = batch.uvCenterRelevant;
             flushBatch();
         }
@@ -714,7 +725,7 @@ export class Mesh {
 
     getDrawBatches(faceIndices) {
         const cached = this.drawBatchCache.get(faceIndices);
-        if (cached && cached.version === this.renderStateVersion && cached.selectedFace === this.selectedFace) return cached.batches;
+        if (cached && cached.version === this.renderStateVersion && cached.selectedFace === this.selectedFace && cached.shadowVersion === this.shadowVersion) return cached.batches;
         const batches = [];
         let current = null;
         for (const faceIndex of faceIndices) {
@@ -737,15 +748,16 @@ export class Mesh {
             }
             const range = this.faceRanges[faceIndex];
             const selected = this.selectedFace === faceIndex;
+            const shadowed = !!this.shadowedFaces[faceIndex];
             const batchColor = [color[0], color[1], color[2], color[3] ?? 1];
-            if (current && current.offset + current.count === range.offset && sameFaceState(current, texture, batchColor, transform, uvCenter, uvCenterRelevant, selected)) {
+            if (current && current.offset + current.count === range.offset && sameFaceState(current, texture, batchColor, transform, uvCenter, uvCenterRelevant, selected, shadowed)) {
                 current.count += range.count;
             } else {
-                current = { offset: range.offset, count: range.count, color: batchColor, texture, transform, uvCenter, uvCenterRelevant, selected };
+                current = { offset: range.offset, count: range.count, color: batchColor, texture, transform, uvCenter, uvCenterRelevant, selected, shadowed };
                 batches.push(current);
             }
         }
-        this.drawBatchCache.set(faceIndices, { version: this.renderStateVersion, selectedFace: this.selectedFace, batches });
+        this.drawBatchCache.set(faceIndices, { version: this.renderStateVersion, selectedFace: this.selectedFace, shadowVersion: this.shadowVersion, batches });
         return batches;
     }
 
@@ -761,6 +773,7 @@ export class Mesh {
                 uUVRotation: gl.getUniformLocation(program, 'uUVRotation'),
                 uUVCenter: gl.getUniformLocation(program, 'uUVCenter'),
                 uFaceSelected: gl.getUniformLocation(program, 'uFaceSelected'),
+                uRayShadowed: gl.getUniformLocation(program, 'uRayShadowed'),
                 uToonShading: gl.getUniformLocation(program, 'uToonShading'),
                 uInstanced: gl.getUniformLocation(program, 'uInstanced')
             };
@@ -799,9 +812,10 @@ function hashGeometry(vertices, indices) {
     return `${vertices.length}:${indices.length}:${first >>> 0}:${second >>> 0}`;
 }
 
-function sameFaceState(batch, texture, color, transform, uvCenter, uvCenterRelevant, selected) {
+function sameFaceState(batch, texture, color, transform, uvCenter, uvCenterRelevant, selected, shadowed) {
     return batch.texture === texture
         && batch.selected === selected
+        && batch.shadowed === shadowed
         && batch.color[0] === color[0]
         && batch.color[1] === color[1]
         && batch.color[2] === color[2]

@@ -1,4 +1,5 @@
 import { loadShaderSource } from './loader.js';
+import { traceDirectionalShadowFaces } from './raytracing.js';
 
 export class Renderer {
     constructor(canvas) {
@@ -17,6 +18,7 @@ export class Renderer {
         this.boneBuffer = null;
         this.frameId = 0;
         this.uniforms = null;
+        this.shadowSignature = null;
         this.ready = this.initProgram();
     }
 
@@ -49,6 +51,7 @@ export class Renderer {
             uUVRotation: gl.getUniformLocation(prog, 'uUVRotation'),
             uUVCenter: gl.getUniformLocation(prog, 'uUVCenter'),
             uFaceSelected: gl.getUniformLocation(prog, 'uFaceSelected'),
+            uRayShadowed: gl.getUniformLocation(prog, 'uRayShadowed'),
             uToonShading: gl.getUniformLocation(prog, 'uToonShading'),
             uLightDirection: gl.getUniformLocation(prog, 'uLightDirection'),
             uLightColor: gl.getUniformLocation(prog, 'uLightColor'),
@@ -103,6 +106,19 @@ export class Renderer {
             gl.uniform1f(this.uniforms.uLightIntensity, light.intensity);
             gl.uniform1f(this.uniforms.uLightThreshold, light.threshold);
             gl.uniform3fv(this.uniforms.uShadeColor, new Float32Array(light.shadeColor));
+        }
+        const shadowSignature = makeShadowSignature(scene);
+        if (shadowSignature !== this.shadowSignature) {
+            const tracedShadows = traceDirectionalShadowFaces(scene, light);
+            scene.meshes.forEach(mesh => {
+                const next = tracedShadows.get(mesh) || Array(mesh.faceCount).fill(false);
+                const previous = mesh.shadowedFaces || [];
+                if (next.length !== previous.length || next.some((shadowed, index) => shadowed !== previous[index])) {
+                    mesh.shadowedFaces = next;
+                    mesh.shadowVersion = (mesh.shadowVersion || 0) + 1;
+                }
+            });
+            this.shadowSignature = shadowSignature;
         }
 
         const transparentFaces = [];
@@ -183,6 +199,7 @@ export class Renderer {
             gl.uniform4fv(uniforms.uColor, batch.color);
             gl.uniform1i(uniforms.uUseTexture, 0);
             gl.uniform1f(uniforms.uFaceSelected, batch.selected ? 1 : 0);
+            gl.uniform1f(uniforms.uRayShadowed, batch.shadowed ? 1 : 0);
             gl.uniform4f(uniforms.uUVTransform, batch.transform.scale[0] * (batch.transform.flipX ? -1 : 1), batch.transform.scale[1] * (batch.transform.flipY ? -1 : 1), batch.transform.offset[0], batch.transform.offset[1]);
             gl.uniform1f(uniforms.uUVRotation, batch.transform.rotation);
             gl.uniform2f(uniforms.uUVCenter, batch.uvCenter[0], batch.uvCenter[1]);
@@ -234,6 +251,7 @@ export class Renderer {
         gl.uniformMatrix4fv(this.uniforms.uModel, false, identityMatrix());
         gl.uniform1f(this.uniforms.uInstanced, 0);
         gl.uniform1f(this.uniforms.uToonShading, 0);
+        gl.uniform1f(this.uniforms.uRayShadowed, 0);
         gl.uniform4fv(this.uniforms.uColor, new Float32Array([1, 1, 1, 1]));
         gl.uniform1i(this.uniforms.uUseTexture, 0);
         gl.uniform1f(this.uniforms.uFaceSelected, 0);
@@ -259,4 +277,29 @@ function rotateVector(matrix, vector) {
 
 function identityMatrix() {
     return new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+}
+
+function makeShadowSignature(scene) {
+    let hash = 2166136261;
+    const add = value => {
+        hash = Math.imul(hash ^ Math.round((Number(value) || 0) * 1e5), 16777619);
+    };
+    add(scene.meshes.length);
+    scene.light?.direction.forEach(add);
+    scene.meshes.forEach(mesh => {
+        add(mesh.renderStateVersion);
+        add(mesh.material.shading === 'toon' ? 1 : 0);
+        mesh.position.forEach(add);
+        mesh.rotation.forEach(add);
+        mesh.scale.forEach(add);
+        add(mesh.skinRevision);
+        if (!mesh.vertexWeights.size) return;
+        if (mesh.animationPlayer.playing) add(Math.floor(mesh.animationPlayer.time * 24));
+        else mesh.skeleton.bones.forEach(bone => {
+            bone.position.forEach(add);
+            bone.rotation.forEach(add);
+            bone.scale.forEach(add);
+        });
+    });
+    return hash >>> 0;
 }

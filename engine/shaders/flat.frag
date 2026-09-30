@@ -9,6 +9,7 @@ uniform sampler2D uTexture;
 uniform vec4 uColor;
 uniform float uFaceSelected;
 uniform float uToonShading;
+uniform float uRayShadowed;
 uniform vec3 uLightDirection;
 uniform vec3 uLightColor;
 uniform float uLightIntensity;
@@ -25,7 +26,7 @@ void main() {
     }
     if (uToonShading > 0.5) {
         float diffuse = clamp(max(dot(vNormal, -uLightDirection), 0.0) * uLightIntensity, 0.0, 1.0);
-        vec3 tone = diffuse >= uLightThreshold ? uLightColor : uShadeColor;
+        vec3 tone = uRayShadowed > 0.5 || diffuse < uLightThreshold ? uShadeColor : uLightColor;
         color *= tone;
     }
     color = mix(color, vec3(1.0, 0.72, 0.12), uFaceSelected * 0.35);
